@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Mirai AI Talent Scout — Strands agent exposed as MCP service
+Description: Mirai AI Talent Scout — MCP service v2
 
 Globals:
   Function:
@@ -10,14 +10,12 @@ Globals:
     Timeout: 900                    # 15 min max — batch enrichment can take time
     Environment:
       Variables:
-        AWS_REGION: !Ref AWS::Region
         BEDROCK_MODEL: eu.anthropic.claude-sonnet-4-5-20250929-v1:0
         BEDROCK_HAIKU_MODEL: eu.anthropic.claude-haiku-4-5-20251001-v1:0
         SUPABASE_URL: !Sub '{{resolve:secretsmanager:mirai-talent-scout/supabase:SecretString:url}}'
         SUPABASE_SERVICE_ROLE_KEY: !Sub '{{resolve:secretsmanager:mirai-talent-scout/supabase:SecretString:service_role_key}}'
         GITHUB_TOKENS: !Sub '{{resolve:secretsmanager:mirai-talent-scout/github:SecretString:tokens}}'
-        ORANGESLICE_API_URL: !Sub '{{resolve:secretsmanager:mirai-talent-scout/orangeslice:SecretString:api_url}}'
-        ORANGESLICE_API_KEY: !Sub '{{resolve:secretsmanager:mirai-talent-scout/orangeslice:SecretString:api_key}}'
+        APIFY_API_TOKEN: !Sub '{{resolve:secretsmanager:mirai-talent-scout/apify:SecretString:api_token}}'
         MCP_AUTH_SECRET: !Sub '{{resolve:secretsmanager:mirai-talent-scout/mcp:SecretString:auth_secret}}'
         LOG_LEVEL: INFO
 
@@ -41,13 +39,15 @@ Resources:
                 - bedrock:InvokeModel
                 - bedrock:InvokeModelWithResponseStream
               Resource:
-                - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/eu.anthropic.claude-sonnet-4-5-20250929-v1:0
-                - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0
+                # Cross-region inference profiles (eu.*) route to any EU region — wildcard region required.
+                - arn:aws:bedrock:*::foundation-model/anthropic.claude-*
+                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/eu.anthropic.claude-*
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
               Resource:
                 - !Sub arn:aws:secretsmanager:${AWS::Region}:335400931736:secret:mirai-talent-scout/*
+
       Events:
         McpApi:
           Type: HttpApi
@@ -66,10 +66,60 @@ Resources:
         AllowHeaders: ['Content-Type', 'Authorization']
         AllowMethods: ['POST', 'OPTIONS']
 
+  # ── Streaming Chat Agent ───────────────────────────────────────────────────
+  # FastAPI + Lambda Web Adapter (ARM64 layer). InvokeMode: RESPONSE_STREAM
+  # allows SSE events to reach the browser progressively during agent execution.
+  # Auth is handled at the application layer (Bearer token middleware in FastAPI).
+  AgentStreamFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: mirai-agent-stream
+      Handler: run.sh
+      Description: Mirai streaming chat agent — FastAPI + Lambda Web Adapter SSE
+      AutoPublishAlias: live
+      ProvisionedConcurrencyConfig:
+        ProvisionedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
+          AWS_LWA_INVOKE_MODE: response_stream
+          PORT: "8000"
+      Layers:
+        # Lambda Web Adapter — ARM64 (Graviton2). Bump version periodically.
+        # Latest: https://github.com/awslabs/aws-lambda-web-adapter/releases
+        - !Sub arn:aws:lambda:${AWS::Region}:753240598075:layer:LambdaAdapterLayerArm64:27
+      FunctionUrlConfig:
+        AuthType: NONE          # LWA requires NONE; auth is in FastAPI middleware
+        InvokeMode: RESPONSE_STREAM
+        Cors:
+          AllowOrigins: ['*']
+          AllowHeaders: ['Content-Type', 'Authorization']
+          AllowMethods: ['*']
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource:
+                # Cross-region inference profiles (eu.*) route to any EU region — wildcard region required.
+                - arn:aws:bedrock:*::foundation-model/anthropic.claude-*
+                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/eu.anthropic.claude-*
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Sub arn:aws:secretsmanager:${AWS::Region}:335400931736:secret:mirai-talent-scout/*
+
 Outputs:
   McpEndpoint:
     Description: MCP service endpoint — add to Claude Desktop or call directly
     Value: !Sub https://${TalentScoutApi}.execute-api.${AWS::Region}.amazonaws.com/prod/mcp
+
+  AgentStreamUrl:
+    Description: Streaming chat agent endpoint — set as STREAM_URL in ui/index.html
+    Value: !GetAtt AgentStreamFunctionUrl.FunctionUrl
 
   FunctionArn:
     Description: Lambda function ARN

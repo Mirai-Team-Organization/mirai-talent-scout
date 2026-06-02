@@ -14,9 +14,88 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
+import boto3
 from strands import tool
 
 from db.client import get_supabase
+
+# ── Bedrock Haiku query translator ───────────────────────────────────────────
+
+_bedrock_client = None
+_query_cache: dict[str, str] = {}
+_QUERY_CACHE_MAX = 100
+
+# GitHub search qualifiers we allow through validation
+_GITHUB_QUALIFIER_PREFIXES = (
+    "language:", "location:", "followers:", "repos:", "in:", "type:", "is:",
+)
+
+_TRANSLATE_SYSTEM = """You are a GitHub user search query builder. Convert recruiter queries into GitHub search syntax.
+
+Valid qualifiers only:
+- location:City  (city or country)
+- language:Name  (Python, JavaScript, TypeScript, Go, Rust, Java, Ruby, C++, etc.)
+- followers:>N   (10=junior, 50=mid, 100=senior, 500=influential)
+- repos:>N       (5=active contributor)
+
+Rules:
+- Extract only what maps to a GitHub qualifier. Ignore "early stage startup", "remote ok", "open to moving".
+- Return ONLY the GitHub search string, nothing else. No explanation.
+
+Examples:
+"senior React engineer in Zurich"           → location:Zurich language:JavaScript followers:>100
+"back-end engineer early stage startup Milan" → location:Milan followers:>10
+"Python data scientist Berlin open to moving" → location:Berlin language:Python followers:>20
+"junior iOS developer"                       → language:Swift followers:>10"""
+
+
+def _get_bedrock():
+    global _bedrock_client
+    if _bedrock_client is None:
+        _bedrock_client = boto3.client("bedrock-runtime")
+    return _bedrock_client
+
+
+def _validate_github_query(query: str) -> str:
+    """Strip tokens with unrecognized qualifier prefixes (Haiku hallucinations)."""
+    tokens = query.strip().split()
+    valid = [
+        t for t in tokens
+        if ":" not in t  # free-text word — keep
+        or any(t.lower().startswith(p) for p in _GITHUB_QUALIFIER_PREFIXES)
+    ]
+    return " ".join(valid)
+
+
+def _translate_query(nl_query: str) -> str:
+    """
+    Translate a natural-language recruiter query to GitHub search syntax via Bedrock Haiku.
+    Results are cached in-process (module-level dict, max 100 entries).
+    Falls back to the raw query string on any error.
+    """
+    if nl_query in _query_cache:
+        return _query_cache[nl_query]
+
+    try:
+        model_id = os.environ.get(
+            "BEDROCK_HAIKU_MODEL", "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+        )
+        resp = _get_bedrock().converse(
+            modelId=model_id,
+            system=[{"text": _TRANSLATE_SYSTEM}],
+            messages=[{"role": "user", "content": [{"text": nl_query}]}],
+            inferenceConfig={"maxTokens": 100, "temperature": 0},
+        )
+        raw = resp["output"]["message"]["content"][0]["text"].strip()
+        translated = _validate_github_query(raw) or nl_query
+
+    except Exception as e:
+        print(f"[translate_query] Bedrock call failed ({e}), using raw query")
+        return nl_query  # don't cache failures — retry on next call
+
+    if len(_query_cache) < _QUERY_CACHE_MAX:
+        _query_cache[nl_query] = translated
+    return translated
 
 # ── GitHub GraphQL query (mirrors profileFetcher.ts) ─────────────────────────
 
@@ -120,7 +199,7 @@ def _increment_usage(token_id: str, count: int) -> None:
         .execute()
     )
 
-    if existing.data:
+    if existing and existing.data:
         sb.table("github_api_usage") \
           .update({"requests_this_hour": existing.data["requests_this_hour"] + count}) \
           .eq("token_id", token_id) \
@@ -226,46 +305,6 @@ def search_github(query: str, limit: int = 20, hiring_context: str | None = None
     return profiles
 
 
-def _translate_query(nl_query: str) -> str:
-    """
-    Translate natural language to GitHub search syntax.
-    Uses rules-based fallback (no API needed for basic cases).
-    For complex queries, invoke Bedrock Haiku.
-    """
-    import re
-    q = nl_query.lower()
-    parts = []
-
-    # Language detection
-    lang_map = {
-        "python": "Python", "typescript": "TypeScript", "javascript": "JavaScript",
-        "react": "JavaScript", "vue": "JavaScript", "angular": "JavaScript",
-        "rust": "Rust", "go": "Go", "java": "Java", "kotlin": "Kotlin",
-        "swift": "Swift", "ruby": "Ruby", "c#": "C#", "php": "PHP",
-    }
-    for keyword, lang in lang_map.items():
-        if keyword in q:
-            parts.append(f"language:{lang}")
-            break
-
-    # Location detection — look for "in [City/Country]"
-    location_match = re.search(r"\bin ([a-zA-Z\s]+?)(?:\s+(?:open|senior|junior|mid|engineer|developer|with|and|$))", nl_query, re.IGNORECASE)
-    if location_match:
-        loc = location_match.group(1).strip()
-        parts.append(f"location:{loc}")
-
-    # Seniority → follower proxy
-    if any(w in q for w in ("senior", "lead", "principal", "staff")):
-        parts.append("followers:>100")
-    elif any(w in q for w in ("mid", "intermediate")):
-        parts.append("followers:>20")
-
-    # Combine or fall back to raw query
-    if parts:
-        return " ".join(parts)
-
-    # Last resort: pass through cleaned query (GitHub handles it gracefully)
-    return nl_query
 
 
 def _parse_profile(user: dict) -> dict:
@@ -287,15 +326,18 @@ def _parse_profile(user: dict) -> dict:
             name = edge["node"]["name"]
             lang_totals[name] = lang_totals.get(name, 0) + edge.get("size", 0)
 
-    languages = [{"name": k, "size": v} for k, v in sorted(lang_totals.items(), key=lambda x: -x[1])]
-
-    # Open source contributions (repos not owned by user)
-    login = user.get("login", "")
-    oss = [
-        {"repo": {"name": c["repository"]["name"]}, "count": c["contributions"]["totalCount"]}
-        for c in cc.get("commitContributionsByRepository", [])
-        if c["repository"]["owner"]["login"] != login
+    # Top 5 languages only — full list can be 20+ entries and bloats context
+    languages = [
+        {"name": k, "size": v}
+        for k, v in sorted(lang_totals.items(), key=lambda x: -x[1])[:5]
     ]
+
+    # Open source contributions — count only; full repo list is ~50 entries per candidate
+    login = user.get("login", "")
+    oss_count = sum(
+        1 for c in cc.get("commitContributionsByRepository", [])
+        if c["repository"]["owner"]["login"] != login
+    )
 
     return {
         "profile": {
@@ -313,15 +355,15 @@ def _parse_profile(user: dict) -> dict:
         "languages": languages,
         "pinnedProjects": user.get("pinnedItems", {}).get("nodes", []),
         "activityHeatmap": {
+            # dailyActivity (365 records/candidate) removed — totalContributions is sufficient for scoring
             "totalContributions": calendar.get("totalContributions", 0),
-            "dailyActivity": daily_activity,
         },
         "contributions": {
             "commits": cc.get("totalCommitContributions", 0),
             "issues": cc.get("totalIssueContributions", 0),
             "pullRequests": cc.get("totalPullRequestContributions", 0),
             "pullRequestReviews": cc.get("totalPullRequestReviewContributions", 0),
-            "openSource": oss,
+            "openSourceRepoCount": oss_count,
         },
         "profileReadme": {"exists": False},  # not fetched in batch mode
     }

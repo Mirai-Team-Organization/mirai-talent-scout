@@ -1,14 +1,17 @@
 """
-LinkedIn enrichment tool — wraps orangeslice, caches results 30 days.
+LinkedIn enrichment tool — uses Apify linkedin-profile-scraper, caches results 30 days.
 
 Uses asyncio.gather for concurrent batch enrichment with a 600s ceiling.
 Partial failures (one candidate fails) never abort the whole batch.
+If no LinkedIn URL is found on the GitHub profile, enrichment is skipped gracefully.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import re
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -19,47 +22,99 @@ from agent.models import LinkedInEnrichment, LinkedInPosition
 from db.linkedin import get_cached_linkedin, upsert_linkedin
 from scoring.mobility_scorer import detect_move_signals
 
+# Apify actor for LinkedIn profile scraping
+# https://apify.com/apify/linkedin-profile-scraper
+APIFY_ACTOR = "apify~linkedin-profile-scraper"
 
-async def _call_orangeslice(github_username: str, linkedin_url: Optional[str]) -> dict:
+
+def _run_in_thread(coro):
+    """Run an async coroutine in a fresh thread+event loop, safe from any calling context."""
+    result = None
+    exc = None
+
+    def target():
+        nonlocal result, exc
+        try:
+            result = asyncio.run(coro)
+        except Exception as e:
+            exc = e
+
+    t = threading.Thread(target=target)
+    t.start()
+    t.join(timeout=25)
+    if exc:
+        raise exc
+    return result
+
+
+def _extract_linkedin_url(profile: dict) -> Optional[str]:
     """
-    Call the orangeslice LinkedIn enrichment service.
-    Read orangeslice-docs/services/index.md for the full API contract.
+    Extract a LinkedIn profile URL from a GitHub profile dict.
+    Checks websiteUrl and bio for linkedin.com/in/ patterns.
     """
-    api_url = os.environ["ORANGESLICE_API_URL"]
-    api_key = os.environ["ORANGESLICE_API_KEY"]
+    pattern = re.compile(r"https?://(www\.)?linkedin\.com/in/[^\s\"'>]+", re.IGNORECASE)
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        payload: dict = {"github_username": github_username}
-        if linkedin_url:
-            payload["linkedin_url"] = linkedin_url
+    website = profile.get("profile", {}).get("websiteUrl") or ""
+    if pattern.search(website):
+        return pattern.search(website).group(0).rstrip("/")
 
+    bio = profile.get("profile", {}).get("bio") or ""
+    match = pattern.search(bio)
+    if match:
+        return match.group(0).rstrip("/")
+
+    return None
+
+
+async def _call_apify(linkedin_url: str) -> dict:
+    """
+    Run the Apify LinkedIn profile scraper synchronously and return the first result.
+    Docs: https://apify.com/apify/linkedin-profile-scraper
+    """
+    api_token = os.environ["APIFY_API_TOKEN"]
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.post(
-            f"{api_url}/enrich/person",
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}"},
+            f"https://api.apify.com/v2/acts/{APIFY_ACTOR}/run-sync-get-dataset-items",
+            params={"token": api_token},
+            json={"profileUrls": [linkedin_url]},
         )
         resp.raise_for_status()
-        return resp.json()
+        items = resp.json()
+
+    if not items:
+        raise ValueError(f"Apify returned no results for {linkedin_url}")
+
+    return items[0]
 
 
-def _parse_orangeslice_response(github_username: str, data: dict) -> LinkedInEnrichment:
-    """Normalise orangeslice response into LinkedInEnrichment model."""
+def _parse_apify_response(github_username: str, data: dict) -> LinkedInEnrichment:
+    """Normalise Apify linkedin-profile-scraper response into LinkedInEnrichment model."""
     positions = []
-    for pos in data.get("positions", []):
+    for pos in data.get("positions", {}).get("items", []):
+        start = pos.get("startDate") or {}
+        end = pos.get("endDate") or {}
+
+        start_str = f"{start.get('year', '')}-{str(start.get('month', '')).zfill(2)}" if start.get("year") else None
+        end_str = f"{end.get('year', '')}-{str(end.get('month', '')).zfill(2)}" if end.get("year") else None
+
         positions.append(LinkedInPosition(
             title=pos.get("title", ""),
-            company=pos.get("company", ""),
-            start_date=pos.get("start_date"),
-            end_date=pos.get("end_date"),
-            is_current=pos.get("is_current", False),
+            company=pos.get("companyName", ""),
+            start_date=start_str,
+            end_date=end_str,
+            is_current=pos.get("isCurrent", False),
         ))
+
+    # Current position from most recent role
+    current = next((p for p in positions if p.is_current), None)
 
     return LinkedInEnrichment(
         github_username=github_username,
-        linkedin_url=data.get("linkedin_url"),
-        full_name=data.get("full_name"),
-        current_title=data.get("current_title"),
-        current_company=data.get("current_company"),
+        linkedin_url=data.get("linkedinUrl") or data.get("url"),
+        full_name=data.get("fullName"),
+        current_title=current.title if current else data.get("headline"),
+        current_company=current.company if current else None,
         location=data.get("location"),
         positions=positions,
         fetched_at=datetime.now(timezone.utc).isoformat(),
@@ -68,28 +123,22 @@ def _parse_orangeslice_response(github_username: str, data: dict) -> LinkedInEnr
 
 async def _enrich_single(
     github_username: str,
-    linkedin_url: Optional[str],
+    linkedin_url: str,
     semaphore: asyncio.Semaphore,
     force_refresh: bool = False,
 ) -> LinkedInEnrichment:
     """Enrich a single candidate — cached, with semaphore-controlled concurrency."""
     async with semaphore:
-        # Cache check
         if not force_refresh:
             cached = get_cached_linkedin(github_username)
             if cached and cached.get("enrichment_data"):
-                return _parse_orangeslice_response(
-                    github_username, cached["enrichment_data"]
-                )
+                return _parse_apify_response(github_username, cached["enrichment_data"])
 
-        # Live enrichment
-        raw = await _call_orangeslice(github_username, linkedin_url)
+        raw = await _call_apify(linkedin_url)
 
-        # Parse and compute mobility
-        enrichment = _parse_orangeslice_response(github_username, raw)
+        enrichment = _parse_apify_response(github_username, raw)
         mobility = detect_move_signals(enrichment)
 
-        # Cache result
         upsert_linkedin(
             github_username=github_username,
             linkedin_url=enrichment.linkedin_url,
@@ -104,33 +153,38 @@ async def _enrich_single(
 async def _enrich_batch(
     candidates: list[dict],
     force_refresh: bool = False,
-) -> list[LinkedInEnrichment | Exception]:
+) -> list[LinkedInEnrichment | Exception | None]:
     """
     Enrich a batch of candidates concurrently.
-    - Max 5 concurrent orangeslice calls (semaphore)
+    - Candidates without a LinkedIn URL are skipped (None returned)
+    - Max 5 concurrent Apify calls (semaphore)
     - 600s overall timeout — returns partial results on timeout
     - return_exceptions=True — one failure doesn't abort others
     """
     semaphore = asyncio.Semaphore(5)
 
-    async def _safe_enrich(c: dict) -> LinkedInEnrichment | Exception:
+    async def _safe_enrich(c: dict) -> LinkedInEnrichment | Exception | None:
+        login = c["profile"]["login"]
+        linkedin_url = _extract_linkedin_url(c)
+        if not linkedin_url:
+            return None  # no LinkedIn URL on GitHub profile — skip gracefully
         try:
             return await _enrich_single(
-                github_username=c["profile"]["login"],
-                linkedin_url=c.get("linkedin_url"),
+                github_username=login,
+                linkedin_url=linkedin_url,
                 semaphore=semaphore,
                 force_refresh=force_refresh,
             )
         except Exception as e:
-            print(f"[enrich_linkedin] Failed for {c['profile']['login']}: {e}")
+            print(f"[enrich_linkedin] Failed for {login}: {e}")
             return e
 
     try:
-        async with asyncio.timeout(600):
+        async with asyncio.timeout(22):
             results = await asyncio.gather(*[_safe_enrich(c) for c in candidates])
     except TimeoutError:
-        print("[enrich_linkedin] Batch timed out after 600s — returning partial results")
-        results = []  # partial — caller handles gracefully
+        print("[enrich_linkedin] Batch timed out after 22s — returning partial results")
+        results = []
 
     return results
 
@@ -143,15 +197,18 @@ def enrich_linkedin(
     """
     Enrich a list of GitHub profiles with LinkedIn data and mobility scores.
 
+    Looks for LinkedIn URLs in each candidate's GitHub websiteUrl or bio.
+    Candidates without a LinkedIn URL are returned with linkedin=null.
+
     Args:
         candidates: List of GitHub profile dicts from search_github()
-        force_refresh: Skip cache and re-fetch from orangeslice
+        force_refresh: Skip cache and re-fetch from Apify
 
     Returns:
         List of dicts combining github profile + linkedin enrichment + mobility score.
-        Candidates with failed enrichment are included with mobility=None.
+        Candidates with failed or missing enrichment are included with linkedin/mobility=null.
     """
-    enrichments = asyncio.run(_enrich_batch(candidates, force_refresh=force_refresh))
+    enrichments = _run_in_thread(_enrich_batch(candidates, force_refresh=force_refresh))
 
     enrichment_map: dict[str, LinkedInEnrichment] = {}
     for e in enrichments:
@@ -166,7 +223,11 @@ def enrich_linkedin(
         entry = dict(profile)
         if enrichment:
             mobility = detect_move_signals(enrichment)
-            entry["linkedin"] = enrichment.model_dump()
+            linkedin_data = enrichment.model_dump()
+            # Cap positions to last 5 — full history can be 15+ roles per candidate
+            if linkedin_data.get("positions"):
+                linkedin_data["positions"] = linkedin_data["positions"][:5]
+            entry["linkedin"] = linkedin_data
             entry["mobility"] = mobility.model_dump()
         else:
             entry["linkedin"] = None

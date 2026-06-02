@@ -1,3 +1,7 @@
+# Web framework for streaming Lambda handler (Lambda Web Adapter)
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+
 # AWS Strands agent framework
 strands-agents>=0.1.0
 strands-agents-tools>=0.1.0

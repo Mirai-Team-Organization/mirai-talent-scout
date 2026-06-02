@@ -25,6 +25,8 @@ from agent.tools.search_github import search_github, RateLimitQueuedError
 from agent.tools.enrich_linkedin import enrich_linkedin
 from agent.tools.score_candidate import score_candidate
 from agent.tools.rank_shortlist import rank_shortlist
+from scoring.talent_scorer import calculate_talent_score
+from scoring.hiring_context import apply_hiring_context
 from scoring.mobility_scorer import detect_move_signals
 from db.client import get_supabase
 
@@ -130,16 +132,22 @@ async def _scout_candidates(args: dict) -> list[TextContent]:
 
     try:
         profiles = search_github(query=query, limit=limit * 2, hiring_context=hiring_context)
-        enriched = enrich_linkedin(candidates=profiles)
 
         scored = []
-        for c in enriched:
-            ts = score_candidate(
-                profile=c,
-                hiring_context=hiring_context,
-                target_location=target_location,
-            )
-            c["talent_score"] = ts
+        for c in profiles:
+            ts = calculate_talent_score(c, hiring_context)
+            if hiring_context:
+                followers = c.get("profile", {}).get("followers", 0)
+                stars = sum(r.get("stargazerCount", 0) for r in c.get("repositories", {}).get("nodes", []))
+                ts = apply_hiring_context(
+                    talent_score=ts,
+                    context=hiring_context,
+                    target_location=target_location,
+                    candidate_location=c.get("profile", {}).get("location"),
+                    candidate_followers=followers,
+                    candidate_stars=stars,
+                )
+            c["talent_score"] = ts.model_dump()
             scored.append(c)
 
         ranked = rank_shortlist(
@@ -153,7 +161,8 @@ async def _scout_candidates(args: dict) -> list[TextContent]:
     except RateLimitQueuedError as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e), "retry_after": "5 minutes"}))]
     except Exception as e:
-        return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+        import traceback
+        return [TextContent(type="text", text=json.dumps({"error": str(e), "traceback": traceback.format_exc()}))]
 
 
 async def _analyze_candidate(args: dict) -> list[TextContent]:
@@ -189,7 +198,7 @@ async def _add_to_pipeline(args: dict) -> list[TextContent]:
 
     # Get candidate UUID
     cand = sb.table("candidates").select("id").eq("github_username", args["github_username"]).maybe_single().execute()
-    if not cand.data:
+    if not cand or not cand.data:
         return [TextContent(type="text", text=json.dumps({"error": "Candidate not in database. Run analyze_candidate first."}))]
 
     sb.table("talent_pipeline").upsert({
@@ -220,37 +229,85 @@ async def _get_pipeline(args: dict) -> list[TextContent]:
 
 def lambda_handler(event: dict, context) -> dict:
     """
-    API Gateway → Lambda handler for MCP HTTP transport.
-    Handles MCP JSON-RPC 2.0 over HTTP POST.
+    API Gateway → Lambda handler.
+    Accepts MCP JSON-RPC 2.0 (method: tools/call, tools/list) over HTTP POST.
     """
     import asyncio
-    from mcp.server.streamable_http import StreamableHTTPServerTransport
+
+    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
 
     # Auth check
-    auth_header = event.get("headers", {}).get("authorization", "")
-    expected = f"Bearer {os.environ.get('MCP_AUTH_SECRET', '')}"
-    if os.environ.get("MCP_AUTH_SECRET") and auth_header != expected:
-        return {"statusCode": 401, "body": json.dumps({"error": "Unauthorized"})}
-
-    body = event.get("body", "{}")
-    if isinstance(body, str):
-        body = json.loads(body)
-
-    # Run async MCP handler
-    async def run():
-        transport = StreamableHTTPServerTransport()
-        async with server.run(transport):
-            return await transport.handle_request(body)
+    auth_secret = os.environ.get("MCP_AUTH_SECRET", "")
+    if auth_secret and headers.get("authorization") != f"Bearer {auth_secret}":
+        return {
+            "statusCode": 401,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "Unauthorized"}),
+        }
 
     try:
-        result = asyncio.run(run())
+        body = event.get("body") or "{}"
+        if isinstance(body, str):
+            body = json.loads(body)
+    except json.JSONDecodeError:
+        return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON"})}
+
+    rpc_id = body.get("id")
+    method = body.get("method", "")
+    params = body.get("params", {})
+
+    def ok(result):
         return {
             "statusCode": 200,
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps(result),
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+            },
+            "body": json.dumps({"jsonrpc": "2.0", "id": rpc_id, "result": result}),
         }
-    except Exception as e:
+
+    def err(code, message):
         return {
-            "statusCode": 500,
-            "body": json.dumps({"error": str(e)}),
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+            },
+            "body": json.dumps({"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": message}}),
         }
+
+    # OPTIONS preflight
+    if event.get("requestContext", {}).get("http", {}).get("method") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            },
+            "body": "",
+        }
+
+    if method == "tools/list":
+        tools = asyncio.run(_list_tools_json())
+        return ok({"tools": tools})
+
+    if method == "tools/call":
+        name = params.get("name", "")
+        arguments = params.get("arguments", {})
+        try:
+            contents = asyncio.run(_dispatch(name, arguments))
+            return ok({"content": [c.__dict__ for c in contents]})
+        except Exception as e:
+            return err(-32000, str(e))
+
+    return err(-32601, f"Method not found: {method}")
+
+
+async def _list_tools_json() -> list[dict]:
+    tools = await list_tools()
+    return [{"name": t.name, "description": t.description, "inputSchema": t.inputSchema} for t in tools]
+
+
+async def _dispatch(name: str, arguments: dict):
+    return await call_tool(name, arguments)

@@ -28,7 +28,7 @@ def get_cached_candidate(github_username: str) -> Optional[dict]:
         .execute()
     )
 
-    if result.data:
+    if result and result.data:
         return {
             "github_data": result.data["github_data"],
             "talent_score": result.data["talent_score"],

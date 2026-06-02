@@ -50,6 +50,9 @@ Return results as a structured JSON array of candidates, sorted by rank."""
 def create_agent(
     model_id: str | None = None,
     region: str | None = None,
+    system_prompt: str | None = None,
+    tools: list | None = None,
+    callback_handler=None,
 ) -> Agent:
     model = BedrockModel(
         model_id=model_id or os.environ.get(
@@ -59,8 +62,12 @@ def create_agent(
         region_name=region or os.environ.get("AWS_REGION", "eu-west-1"),
     )
 
-    return Agent(
+    kwargs: dict = dict(
         model=model,
-        tools=[search_github, enrich_linkedin, score_candidate, rank_shortlist],
-        system_prompt=SYSTEM_PROMPT,
+        tools=tools if tools is not None else [search_github, enrich_linkedin, score_candidate, rank_shortlist],
+        system_prompt=system_prompt or SYSTEM_PROMPT,
     )
+    if callback_handler is not None:
+        kwargs["callback_handler"] = callback_handler
+
+    return Agent(**kwargs)

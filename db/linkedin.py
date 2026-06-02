@@ -27,7 +27,7 @@ def get_cached_linkedin(github_username: str) -> Optional[dict]:
         .execute()
     )
 
-    return result.data if result.data else None
+    return result.data if (result and result.data) else None
 
 
 def upsert_linkedin(

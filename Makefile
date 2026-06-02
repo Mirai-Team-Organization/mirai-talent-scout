@@ -62,14 +62,14 @@ secrets-init:
 		--secret-string '{"tokens":"$(GITHUB_TOKENS)"}'
 
 	aws secretsmanager create-secret \
-		--name mirai-talent-scout/orangeslice \
+		--name mirai-talent-scout/apify \
 		--region eu-west-1 \
-		--secret-string '{"api_url":"$(ORANGESLICE_API_URL)","api_key":"$(ORANGESLICE_API_KEY)"}' \
+		--secret-string '{"api_token":"$(APIFY_API_TOKEN)"}' \
 		2>/dev/null || \
 	aws secretsmanager update-secret \
-		--secret-id mirai-talent-scout/orangeslice \
+		--secret-id mirai-talent-scout/apify \
 		--region eu-west-1 \
-		--secret-string '{"api_url":"$(ORANGESLICE_API_URL)","api_key":"$(ORANGESLICE_API_KEY)"}'
+		--secret-string '{"api_token":"$(APIFY_API_TOKEN)"}'
 
 	aws secretsmanager create-secret \
 		--name mirai-talent-scout/mcp \
@@ -107,12 +107,16 @@ migrate:
 
 # ── Local dev ─────────────────────────────────────────────────────────────────
 
+serve-ui:
+	@echo "Opening http://localhost:8080"
+	@open http://localhost:8080 &
+	python3 -m http.server 8080 --directory ui
+
 run-local:
 	# Quick sanity check — runs the agent with a test query
-	python -c "
-import os; os.environ.setdefault('USE_FIXTURES', 'true')
-from agent.agent import create_agent
-agent = create_agent()
-result = agent('Find senior Python engineers in Berlin')
-print(result)
-"
+	USE_FIXTURES=true python -c "from agent.agent import create_agent; agent = create_agent(); print(agent('Find senior Python engineers in Berlin'))"
+
+serve-stream:
+	# Run the FastAPI streaming agent locally (mirrors Lambda Web Adapter behaviour)
+	# Set MCP_AUTH_SECRET= to disable auth for local testing
+	MCP_AUTH_SECRET="" uvicorn agent.stream_app:app --host 0.0.0.0 --port 8000 --reload
