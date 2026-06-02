@@ -1,0 +1,32 @@
+{
+  "_comment": "Sample orangeslice LinkedIn enrichment response for unit tests.",
+  "github_username": "sample-dev",
+  "linkedin_url": "https://linkedin.com/in/sample-dev",
+  "full_name": "Sample Developer",
+  "current_title": "Senior Software Engineer",
+  "current_company": "AcmeCorp",
+  "location": "Berlin, Germany",
+  "positions": [
+    {
+      "title": "Senior Software Engineer",
+      "company": "AcmeCorp",
+      "start_date": "2022-06",
+      "end_date": null,
+      "is_current": true
+    },
+    {
+      "title": "Software Engineer",
+      "company": "StartupXYZ",
+      "start_date": "2020-03",
+      "end_date": "2022-05",
+      "is_current": false
+    },
+    {
+      "title": "Junior Developer",
+      "company": "AgencyABC",
+      "start_date": "2018-09",
+      "end_date": "2020-02",
+      "is_current": false
+    }
+  ]
+}

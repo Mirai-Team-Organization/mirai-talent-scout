@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Mirai AI Talent Scout — Strands agent exposed as MCP service
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]          # Graviton2 — 20% cheaper than x86
+    MemorySize: 1024
+    Timeout: 900                    # 15 min max — batch enrichment can take time
+    Environment:
+      Variables:
+        AWS_REGION: !Ref AWS::Region
+        BEDROCK_MODEL: eu.anthropic.claude-sonnet-4-5-20250929-v1:0
+        BEDROCK_HAIKU_MODEL: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+        SUPABASE_URL: !Sub '{{resolve:secretsmanager:mirai-talent-scout/supabase:SecretString:url}}'
+        SUPABASE_SERVICE_ROLE_KEY: !Sub '{{resolve:secretsmanager:mirai-talent-scout/supabase:SecretString:service_role_key}}'
+        GITHUB_TOKENS: !Sub '{{resolve:secretsmanager:mirai-talent-scout/github:SecretString:tokens}}'
+        ORANGESLICE_API_URL: !Sub '{{resolve:secretsmanager:mirai-talent-scout/orangeslice:SecretString:api_url}}'
+        ORANGESLICE_API_KEY: !Sub '{{resolve:secretsmanager:mirai-talent-scout/orangeslice:SecretString:api_key}}'
+        MCP_AUTH_SECRET: !Sub '{{resolve:secretsmanager:mirai-talent-scout/mcp:SecretString:auth_secret}}'
+        LOG_LEVEL: INFO
+
+Resources:
+
+  TalentScoutFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: mirai-talent-scout
+      Handler: mcp.handler.lambda_handler
+      Description: Mirai AI Talent Scout — MCP service over HTTP
+      # Provisioned concurrency = no cold start for recruiter-facing tool
+      AutoPublishAlias: live
+      ProvisionedConcurrencyConfig:
+        ProvisionedConcurrentExecutions: 1
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource:
+                - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/eu.anthropic.claude-sonnet-4-5-20250929-v1:0
+                - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Sub arn:aws:secretsmanager:${AWS::Region}:335400931736:secret:mirai-talent-scout/*
+      Events:
+        McpApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TalentScoutApi
+            Path: /mcp
+            Method: POST
+
+  TalentScoutApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+      Description: Mirai Talent Scout MCP endpoint
+      CorsConfiguration:
+        AllowOrigins: ['*']
+        AllowHeaders: ['Content-Type', 'Authorization']
+        AllowMethods: ['POST', 'OPTIONS']
+
+Outputs:
+  McpEndpoint:
+    Description: MCP service endpoint — add to Claude Desktop or call directly
+    Value: !Sub https://${TalentScoutApi}.execute-api.${AWS::Region}.amazonaws.com/prod/mcp
+
+  FunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt TalentScoutFunction.Arn

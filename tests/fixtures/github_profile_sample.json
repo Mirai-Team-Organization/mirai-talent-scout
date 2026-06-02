@@ -1,0 +1,47 @@
+{
+  "_comment": "Sample GitHub profile fixture for unit tests. Shape matches profileFetcher.ts output.",
+  "profile": {
+    "login": "sample-dev",
+    "name": "Sample Developer",
+    "bio": "Full-stack engineer | Open source contributor",
+    "email": null,
+    "location": "Berlin, Germany",
+    "company": "AcmeCorp",
+    "websiteUrl": "https://sample.dev",
+    "twitterUsername": null,
+    "createdAt": "2018-03-15T00:00:00Z",
+    "followers": 142
+  },
+  "languages": [
+    {"name": "TypeScript", "size": 85000},
+    {"name": "Python", "size": 42000},
+    {"name": "Go", "size": 18000}
+  ],
+  "pinnedProjects": [
+    {"name": "awesome-tool", "description": "A useful CLI tool", "stargazerCount": 234, "url": "https://github.com/sample-dev/awesome-tool"},
+    {"name": "api-client", "description": "REST API client library", "stargazerCount": 87, "url": "https://github.com/sample-dev/api-client"},
+    {"name": "blog", "description": "Personal blog", "stargazerCount": 12, "url": "https://github.com/sample-dev/blog"}
+  ],
+  "profileReadme": {"exists": true},
+  "activityHeatmap": {
+    "totalContributions": 847,
+    "dailyActivity": []
+  },
+  "contributions": {
+    "commits": 412,
+    "issues": 67,
+    "pullRequests": 89,
+    "pullRequestReviews": 45,
+    "openSource": [
+      {"repo": {"name": "vercel/next.js"}, "count": 3},
+      {"repo": {"name": "facebook/react"}, "count": 1},
+      {"repo": {"name": "sindresorhus/got"}, "count": 7}
+    ]
+  },
+  "repositories": {
+    "nodes": [
+      {"name": "awesome-tool", "stargazerCount": 234, "languages": {"edges": [{"size": 85000, "node": {"name": "TypeScript"}}]}},
+      {"name": "api-client", "stargazerCount": 87, "languages": {"edges": [{"size": 42000, "node": {"name": "TypeScript"}}]}}
+    ]
+  }
+}
