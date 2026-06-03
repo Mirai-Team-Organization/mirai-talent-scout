@@ -18,13 +18,83 @@
 
     /* ── Header ── */
     header {
-      padding: 20px 40px;
+      padding: 16px 40px;
       border-bottom: 1px solid #1e2330;
       flex-shrink: 0;
     }
 
     header h1 { font-size: 17px; font-weight: 600; color: #f8fafc; letter-spacing: -0.2px; }
     header p  { font-size: 12px; color: #4a5568; margin-top: 2px; }
+
+    /* ── Context selector bar ── */
+    #context-bar {
+      flex-shrink: 0;
+      background: #0d1020;
+      border-bottom: 1px solid #1e2330;
+      padding: 10px 40px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #context-bar label {
+      font-size: 11px;
+      color: #4a5568;
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .ctx-select {
+      background: #141824;
+      border: 1px solid #252d3d;
+      border-radius: 8px;
+      color: #c8d3e0;
+      font-size: 13px;
+      padding: 6px 10px;
+      cursor: pointer;
+      outline: none;
+      transition: border-color 0.15s;
+      min-width: 160px;
+    }
+
+    .ctx-select:focus { border-color: #4f6ef7; }
+    .ctx-select:disabled { opacity: 0.4; cursor: default; }
+    .ctx-select option { background: #141824; }
+
+    #ctx-clear {
+      background: none;
+      border: 1px solid #252d3d;
+      border-radius: 6px;
+      color: #64748b;
+      font-size: 12px;
+      padding: 5px 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: none;
+    }
+
+    #ctx-clear:hover { border-color: #4f6ef7; color: #4f6ef7; }
+
+    #ctx-badge {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      background: #0e1a35;
+      border: 1px solid #2a3860;
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 11px;
+      color: #4f6ef7;
+      margin-left: auto;
+    }
+
+    #ctx-badge .ctx-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #4f6ef7;
+    }
 
     /* ── Message thread ── */
     #thread {
@@ -45,7 +115,6 @@
     .msg-row.user   { flex-direction: row-reverse; }
     .msg-row.system { justify-content: center; }
 
-    /* Avatar circle */
     .avatar {
       width: 28px;
       height: 28px;
@@ -62,7 +131,6 @@
     .avatar.bot  { background: #1e2a4a; color: #4f6ef7; }
     .avatar.user { background: #1e2a1e; color: #4ade80; }
 
-    /* Bubble */
     .bubble {
       max-width: 680px;
       min-width: 0;
@@ -84,7 +152,6 @@
       color: #c8d3e0;
     }
 
-    /* Tool activity badges shown inside assistant bubble during streaming */
     .tool-activity {
       display: flex;
       flex-wrap: wrap;
@@ -120,10 +187,8 @@
       50%       { opacity: 0.3; }
     }
 
-    /* Text content area */
     .msg-text { white-space: pre-wrap; word-break: break-word; }
 
-    /* Thinking indicator */
     .thinking {
       display: inline-flex;
       align-items: center;
@@ -147,7 +212,6 @@
       40%           { transform: translateY(-4px); opacity: 1; }
     }
 
-    /* Error bubble */
     .error-bubble {
       background: #2a1a1a;
       border: 1px solid #7f1d1d;
@@ -169,14 +233,52 @@
       background: #1a1f2e;
       border: 1px solid #252d3d;
       border-radius: 12px;
-      padding: 16px 20px;
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 10px;
+      overflow: hidden;
       transition: border-color 0.15s;
     }
 
     .candidate-card:hover { border-color: #3d4f6e; }
+    .candidate-card.internal { border-color: #2d4a2d; }
+
+    .source-banner {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 14px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+
+    .source-banner.source-internal {
+      background: #152415;
+      color: #4ade80;
+      border-bottom: 1px solid #1e3a1e;
+    }
+
+    .source-banner.source-external {
+      background: #111a2e;
+      color: #4f8ef7;
+      border-bottom: 1px solid #1e2a45;
+    }
+
+    .source-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .source-internal .source-dot { background: #4ade80; }
+    .source-external .source-dot { background: #4f8ef7; }
+
+    .card-body {
+      padding: 14px 18px 14px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+    }
 
     .candidate-main { min-width: 0; }
 
@@ -185,6 +287,104 @@
       align-items: center;
       gap: 10px;
       margin-bottom: 6px;
+    }
+
+    /* ── LinkedIn enrichment section ── */
+    .linkedin-section {
+      margin: 8px 0 4px;
+      padding: 8px 10px;
+      background: #131b2e;
+      border: 1px solid #1e2d47;
+      border-radius: 7px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .linkedin-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #7aa2c8;
+      flex-wrap: wrap;
+    }
+
+    .linkedin-row .li-label {
+      color: #3d5478;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      flex-shrink: 0;
+    }
+
+    .open-to-work {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: #0e2a1a;
+      border: 1px solid #1a4a2a;
+      border-radius: 10px;
+      padding: 1px 8px;
+      font-size: 10px;
+      font-weight: 600;
+      color: #4ade80;
+      letter-spacing: 0.3px;
+    }
+
+    .trajectory-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .trajectory-badge.ascending { color: #4ade80; }
+    .trajectory-badge.lateral   { color: #facc15; }
+    .trajectory-badge.descending { color: #f87171; }
+
+    /* ── Match explanation ── */
+    .match-section {
+      margin: 6px 0 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .match-label {
+      font-size: 10px;
+      color: #3d5478;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      flex-shrink: 0;
+    }
+
+    .match-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      background: #141e30;
+      border: 1px solid #1e2d45;
+      border-radius: 10px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: #7aa2c8;
+    }
+
+    .match-pill.good  { color: #4ade80; border-color: #1e3a2a; background: #0e1f16; }
+    .match-pill.mid   { color: #facc15; border-color: #3a3010; background: #1f1a0a; }
+    .match-pill.low   { color: #f87171; border-color: #3a1010; background: #1f0a0a; }
+
+    /* ── Run timer ── */
+    .run-timer {
+      font-size: 11px;
+      color: #374151;
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
     }
 
     .gh-avatar {
@@ -222,7 +422,11 @@
       color: #7aa2c8;
     }
 
-    .mobility-tag { background: #1e2e1e; border-color: #2d4a2d; color: #7ac87a; }
+    .tag.internal-tag { background: #1a2e1a; border-color: #2d4a2d; color: #7ac87a; }
+    .tag.mobility-tag { background: #1e2e1e; border-color: #2d4a2d; color: #7ac87a; }
+    .tag.salary-match { background: #1a2e1a; border-color: #2d4a2d; color: #7ac87a; }
+    .tag.salary-above { background: #2e1a1a; border-color: #4a2d2d; color: #f87171; }
+    .tag.salary-below { background: #2a251a; border-color: #4a3a2d; color: #fbbf24; }
 
     .score-section { text-align: right; flex-shrink: 0; }
 
@@ -299,7 +503,6 @@
     #sendBtn:hover    { background: #3d5ce0; }
     #sendBtn:disabled { background: #1e2330; color: #4a5568; cursor: not-allowed; }
 
-    /* ── Misc ── */
     .empty-state {
       text-align: center;
       padding: 80px 40px;
@@ -319,12 +522,32 @@
   <p>Conversational AI developer search — ask naturally, follow up, refine</p>
 </header>
 
+<!-- Context selector: pick company → job posting to drive rubric-aware search -->
+<div id="context-bar">
+  <label for="companySelect">Company</label>
+  <select id="companySelect" class="ctx-select">
+    <option value="">— select company —</option>
+  </select>
+
+  <label for="postingSelect">Job Posting</label>
+  <select id="postingSelect" class="ctx-select" disabled>
+    <option value="">— select posting —</option>
+  </select>
+
+  <button id="ctx-clear" onclick="clearContext()">✕ Clear</button>
+
+  <div id="ctx-badge">
+    <span class="ctx-dot"></span>
+    <span id="ctx-badge-text">No context</span>
+  </div>
+</div>
+
 <div id="thread">
-  <div class="empty-state">
+  <div class="empty-state" id="empty-state">
     <strong>How can I help you find talent today?</strong>
-    Try: <em>"senior React engineer in Berlin open to relocation"</em><br>
-    or: <em>"Python ML engineer, early-stage startup, anywhere in EU"</em>
-    <div class="empty-hint">I'll search GitHub, score candidates, and ask if I need more detail.</div>
+    Select a job posting above to search with the full hiring rubric,<br>
+    or type a natural language query to search without a specific role.
+    <div class="empty-hint">I'll search Mirai's internal pool first, then GitHub.</div>
   </div>
 </div>
 
@@ -333,24 +556,31 @@
     <textarea
       id="msgInput"
       rows="1"
-      placeholder="Ask about a role, location, tech stack…"
+      placeholder="Add filters or just press Send to search…"
       autofocus
     ></textarea>
-    <button id="sendBtn" onclick="send()">Send</button>
+    <button id="sendBtn" onclick="send()">Search</button>
   </div>
 </div>
 
 <script>
-  // ── Config ────────────────────────────────────────────────────────────────
-  // After deploying, paste the AgentStreamUrl output from `sam deploy` here.
-  const STREAM_URL = "https://gd7743h2wwqsgsasuiqib6twiq0hohfo.lambda-url.eu-west-1.on.aws/";
+  // ── Config ──────────────────────────────────────────────────────────────────
+  // Auto-detect: when served from localhost, talk to the local server.
+  // When served from Lambda (or opened via file://), use the production Lambda URL.
+  const _isLocal   = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const STREAM_URL = _isLocal
+    ? window.location.origin           // http://127.0.0.1:8000
+    : "https://gd7743h2wwqsgsasuiqib6twiq0hohfo.lambda-url.eu-west-1.on.aws/";
   const AUTH       = "Bearer 16d51e39deda6a9a23285ce464cf756b4a7cc1da56cb63380e667829386394e2";
 
-  // ── State ─────────────────────────────────────────────────────────────────
-  const history = [];   // [{role, content}] — sent on every turn
-  let   busy    = false;
+  // ── State ───────────────────────────────────────────────────────────────────
+  const history        = [];
+  let   busy           = false;
+  let   selectedPostingId   = null;
+  let   selectedPostingLabel = null;
+  let   allPostings    = {};   // company_name → [{id, title, location, seniority, ...}]
 
-  // ── Auto-resize textarea ──────────────────────────────────────────────────
+  // ── Auto-resize textarea ───────────────────────────────────────────────────
   const input = document.getElementById("msgInput");
   input.addEventListener("input", () => {
     input.style.height = "auto";
@@ -360,28 +590,137 @@
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
 
-  // ── Send ──────────────────────────────────────────────────────────────────
+  // ── Load job postings on startup ───────────────────────────────────────────
+  async function loadJobPostings() {
+    try {
+      const resp = await fetch(STREAM_URL.replace(/\/$/, "") + "/job-postings", {
+        headers: { "Authorization": AUTH },
+      });
+      if (!resp.ok) return;
+      const companies = await resp.json();
+
+      const companySelect = document.getElementById("companySelect");
+      companies.forEach(({ company_name, postings }) => {
+        const opt = document.createElement("option");
+        opt.value = company_name;
+        opt.textContent = company_name;
+        companySelect.appendChild(opt);
+        allPostings[company_name] = postings;
+      });
+    } catch (e) {
+      console.warn("Could not load job postings:", e);
+    }
+  }
+
+  loadJobPostings();
+
+  // ── Company select → populate job posting dropdown ─────────────────────────
+  document.getElementById("companySelect").addEventListener("change", function () {
+    const postingSelect = document.getElementById("postingSelect");
+    postingSelect.innerHTML = '<option value="">— select posting —</option>';
+    postingSelect.disabled = true;
+    clearContext(/* keepCompany */ true);
+
+    const company = this.value;
+    if (!company) return;
+
+    const postings = allPostings[company] || [];
+    postings.forEach(p => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      const loc = p.location ? ` · ${p.location}` : "";
+      const sen = p.seniority ? ` (${p.seniority})` : "";
+      opt.textContent = `${p.title}${sen}${loc}`;
+      postingSelect.appendChild(opt);
+    });
+    postingSelect.disabled = false;
+  });
+
+  // ── Job posting select → set active context ────────────────────────────────
+  document.getElementById("postingSelect").addEventListener("change", function () {
+    if (!this.value) {
+      clearContext(/* keepCompany */ true);
+      return;
+    }
+    selectedPostingId = this.value;
+    const label = this.options[this.selectedIndex].textContent;
+    selectedPostingLabel = label;
+
+    // Update badge
+    const badge = document.getElementById("ctx-badge");
+    badge.style.display = "inline-flex";
+    document.getElementById("ctx-badge-text").textContent = label;
+    document.getElementById("ctx-clear").style.display = "inline-flex";
+
+    // Update empty state
+    updateEmptyState();
+
+    // Reset conversation for new context
+    history.length = 0;
+  });
+
+  function clearContext(keepCompany = false) {
+    selectedPostingId    = null;
+    selectedPostingLabel = null;
+    document.getElementById("ctx-badge").style.display = "none";
+    document.getElementById("ctx-clear").style.display = "none";
+
+    if (!keepCompany) {
+      document.getElementById("companySelect").value = "";
+      const postingSelect = document.getElementById("postingSelect");
+      postingSelect.innerHTML = '<option value="">— select posting —</option>';
+      postingSelect.disabled = true;
+    } else {
+      document.getElementById("postingSelect").value = "";
+    }
+
+    updateEmptyState();
+    history.length = 0;
+  }
+
+  function updateEmptyState() {
+    const es = document.getElementById("empty-state");
+    if (!es) return;
+    if (selectedPostingId) {
+      es.innerHTML = `
+        <strong>Ready to search for: ${escHtml(selectedPostingLabel)}</strong>
+        Press <em>Search</em> to find candidates using the full hiring rubric,<br>
+        or type a filter first (e.g. "focus on Python" or "only remote candidates").
+        <div class="empty-hint">I'll check Mirai's internal pool first, then GitHub.</div>`;
+    } else {
+      es.innerHTML = `
+        <strong>How can I help you find talent today?</strong>
+        Select a job posting above to search with the full hiring rubric,<br>
+        or type a natural language query to search without a specific role.
+        <div class="empty-hint">I'll search Mirai's internal pool first, then GitHub.</div>`;
+    }
+  }
+
+  // ── Send ───────────────────────────────────────────────────────────────────
   async function send() {
     const message = input.value.trim();
-    if (!message || busy) return;
+
+    // If no message and no posting selected, require one
+    if (!message && !selectedPostingId) return;
+    if (busy) return;
 
     busy = true;
     document.getElementById("sendBtn").disabled = true;
     input.value = "";
     input.style.height = "auto";
 
-    // Clear empty state if present
     const thread = document.getElementById("thread");
     if (thread.querySelector(".empty-state")) thread.innerHTML = "";
 
-    // Render user message
-    appendUserMsg(message);
+    // Show user message (if any)
+    if (message) appendUserMsg(message);
+    else         appendContextMsg(`Searching for: ${selectedPostingLabel}`);
 
-    // Placeholder for assistant response
     const assistantRow = appendAssistantPlaceholder();
+    const searchStart = Date.now();
 
     try {
-      await streamAgent(message, assistantRow);
+      await streamAgent(message, assistantRow, searchStart);
     } catch (err) {
       setError(assistantRow, err.message);
     } finally {
@@ -391,35 +730,31 @@
     }
   }
 
-  // ── Streaming ─────────────────────────────────────────────────────────────
-  async function streamAgent(message, assistantRow) {
+  // ── Streaming ──────────────────────────────────────────────────────────────
+  async function streamAgent(message, assistantRow, searchStart) {
+    const body = { message, history };
+    if (selectedPostingId) body.job_posting_id = selectedPostingId;
+
     const resp = await fetch(STREAM_URL.replace(/\/$/, "") + "/agent", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": AUTH,
-      },
-      body: JSON.stringify({ message, history }),
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "Authorization": AUTH },
+      body:    JSON.stringify(body),
     });
 
     if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      throw new Error(`HTTP ${resp.status}${body ? ": " + body : ""}`);
+      const text = await resp.text().catch(() => "");
+      throw new Error(`HTTP ${resp.status}${text ? ": " + text : ""}`);
     }
 
     const reader  = resp.body.getReader();
     const decoder = new TextDecoder();
     let   buf     = "";
-
-    // Track accumulated state for this turn
-    let   textAcc      = "";
+    let   textAcc = "";
     let   candidatesEl = null;
+    let   firstEvent   = true;
 
     const toolActivity = assistantRow.querySelector(".tool-activity");
     const textEl       = assistantRow.querySelector(".msg-text");
-
-    // Remove "thinking" dots once first event arrives
-    let   firstEvent   = true;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -435,7 +770,6 @@
         try { event = JSON.parse(chunk.slice(6)); } catch { continue; }
 
         if (firstEvent) {
-          // Remove thinking indicator
           assistantRow.querySelector(".thinking")?.remove();
           firstEvent = false;
         }
@@ -452,10 +786,8 @@
             break;
 
           case "candidates":
-            // Clear streamed text (it was the JSON array — not human-readable)
             textAcc = "";
             textEl.textContent = "";
-            // Mark tool badges as done
             toolActivity.querySelectorAll(".tool-badge").forEach(b => {
               b.classList.remove("running");
               b.classList.add("done");
@@ -474,24 +806,39 @@
             setError(assistantRow, event.text);
             break;
 
-          case "done":
-            // Finalise tool badges
+          case "done": {
             toolActivity.querySelectorAll(".tool-badge.running").forEach(b => {
               b.classList.remove("running");
               b.classList.add("done");
               b.querySelector(".dot")?.remove();
             });
-            // Update history for next turn
-            history.push({ role: "user",      content: message });
+            history.push({ role: "user",      content: message || `[search: ${selectedPostingLabel}]` });
             history.push({ role: "assistant", content: textAcc || "[candidates shown]" });
+
+            // ── Timer + cost footer ───────────────────────────────────────
+            const elapsed = ((Date.now() - searchStart) / 1000).toFixed(1);
+            const costUsd  = event.estimated_cost_usd;
+            const nCand    = event.num_candidates;
+            const nEnrich  = event.num_enriched;
+            let footerParts = [`⏱ Completed in ${elapsed}s`];
+            if (nCand   != null) footerParts.push(`${nCand} candidate${nCand !== 1 ? "s" : ""}`);
+            if (nEnrich != null && nEnrich > 0) footerParts.push(`${nEnrich} LinkedIn enriched`);
+            if (costUsd != null) footerParts.push(`~$${costUsd.toFixed(3)} est. cost`);
+
+            const timerEl = document.createElement("div");
+            timerEl.className = "run-timer";
+            timerEl.textContent = footerParts.join(" · ");
+            assistantRow.querySelector(".bubble").appendChild(timerEl);
+
             scrollBottom();
             break;
+          }
         }
       }
     }
   }
 
-  // ── DOM helpers ───────────────────────────────────────────────────────────
+  // ── DOM helpers ────────────────────────────────────────────────────────────
   function appendUserMsg(text) {
     const thread = document.getElementById("thread");
     const row = document.createElement("div");
@@ -499,6 +846,15 @@
     row.innerHTML = `
       <div class="avatar user">Y</div>
       <div class="bubble"><span class="msg-text">${escHtml(text)}</span></div>`;
+    thread.appendChild(row);
+    scrollBottom();
+  }
+
+  function appendContextMsg(text) {
+    const thread = document.getElementById("thread");
+    const row = document.createElement("div");
+    row.className = "msg-row system";
+    row.innerHTML = `<span style="font-size:12px;color:#374151;">${escHtml(text)}</span>`;
     thread.appendChild(row);
     scrollBottom();
   }
@@ -539,7 +895,7 @@
     thread.scrollTop = thread.scrollHeight;
   }
 
-  // ── Candidate card renderer (preserved from original ui/index.html) ───────
+  // ── Candidate card renderer ────────────────────────────────────────────────
   function renderCandidates(candidates, container) {
     container.innerHTML = candidates.map((c, i) => renderCard(c, i + 1)).join("");
   }
@@ -547,42 +903,151 @@
   function renderCard(c, rank) {
     const p = c.profile || {};
     const ts = c.talent_score || {};
-    const score = Math.round(ts.overall ?? ts.total_score ?? 0);
-    const login = p.login || "";
-    const name = p.name || login;
-    const location = p.location || "";
-    const company = p.company || "";
-    const bio = p.bio || "";
-    const avatarUrl = `https://github.com/${login}.png?size=80`;
+    const isInternal = c.source === "internal_mirai";
 
+    // Score: prefer fit_score (rubric mode), fall back to talent_score.overall
+    const fitScore   = c.fit_score != null ? Math.round(c.fit_score) : null;
+    const baseScore  = Math.round(ts.overall ?? ts.total_score ?? 0);
+    const score      = fitScore ?? baseScore;
+    const scoreLabel = fitScore != null ? "Fit" : "Score";
+
+    const login      = p.login || "";
+    const name       = p.name || (isInternal ? (c.job_role || "Internal Candidate") : login);
+    const location   = p.location || c.linkedin?.location || "";
+    const company    = p.company || c.linkedin?.current_company || "";
+    const bio        = p.bio || "";
+
+    // ── Source banner ──────────────────────────────────────────────────────
+    const sourceBanner = isInternal
+      ? `<div class="source-banner source-internal"><span class="source-dot"></span>Internal Pool · Mirai Database</div>`
+      : `<div class="source-banner source-external"><span class="source-dot"></span>External · GitHub</div>`;
+
+    // Avatar: GitHub for external, initials for internal
+    const avatarHtml = isInternal
+      ? `<div class="gh-avatar" style="display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#4ade80;background:#1a2e1a;">${escHtml((name || "?")[0].toUpperCase())}</div>`
+      : `<img class="gh-avatar" src="https://github.com/${escHtml(login)}.png?size=80" alt="${escHtml(login)}" onerror="this.style.display='none'" />`;
+
+    // Username / link
+    const usernameHtml = isInternal
+      ? `<span class="candidate-username" style="color:#4ade80">Internal candidate</span>`
+      : `<a class="candidate-username" href="https://github.com/${escHtml(login)}" target="_blank">@${escHtml(login)}</a>`;
+
+    // ── LinkedIn enrichment section ────────────────────────────────────────
+    let linkedinHtml = "";
+    const li = c.linkedin;
+    const cs = c.career_signals;
+    if (li || cs) {
+      const rows = [];
+
+      // Current role row
+      const liTitle   = li?.current_title;
+      const liCompany = li?.current_company;
+      const liYears   = cs?.years_of_experience != null ? `${Math.round(cs.years_of_experience * 10) / 10} yrs exp` : null;
+      const liLevel   = cs?.seniority_level;
+      const liTraj    = cs?.career_trajectory;
+
+      if (liTitle || liCompany) {
+        const roleParts = [liTitle, liCompany].filter(Boolean);
+        rows.push(`<div class="linkedin-row">
+          <span class="li-label">LinkedIn</span>
+          <span>${escHtml(roleParts.join(" @ "))}</span>
+          ${li?.open_to_work ? `<span class="open-to-work">Open to Work</span>` : ""}
+        </div>`);
+      }
+
+      // Career signals row
+      const signalParts = [];
+      if (liYears) signalParts.push(escHtml(liYears));
+      if (liLevel) signalParts.push(escHtml(liLevel.charAt(0).toUpperCase() + liLevel.slice(1)));
+      if (liTraj && liTraj !== "insufficient_data") {
+        const trajIcon  = liTraj === "ascending" ? "↑" : liTraj === "lateral" ? "→" : "↓";
+        const trajClass = liTraj === "ascending" ? "ascending" : liTraj === "lateral" ? "lateral" : "descending";
+        signalParts.push(`<span class="trajectory-badge ${trajClass}">${trajIcon} ${escHtml(liTraj)}</span>`);
+      }
+      if (li?.languages_spoken?.length) {
+        signalParts.push(escHtml(li.languages_spoken.slice(0, 3).join(", ")));
+      }
+      if (signalParts.length) {
+        rows.push(`<div class="linkedin-row"><span class="li-label">Career</span>${signalParts.join(" · ")}</div>`);
+      }
+
+      // LinkedIn link
+      if (li?.linkedin_url) {
+        rows.push(`<div class="linkedin-row"><a href="${escHtml(li.linkedin_url)}" target="_blank" style="font-size:11px;color:#3d6ea8;text-decoration:none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">View LinkedIn profile →</a></div>`);
+      }
+
+      if (rows.length) {
+        linkedinHtml = `<div class="linkedin-section">${rows.join("")}</div>`;
+      }
+    }
+
+    // ── Match explanation ──────────────────────────────────────────────────
+    let matchHtml = "";
+    const rubricScore   = c.rubric_match_score;
+    const locationFit   = c.location_fit;
+    const salaryFitVal  = c.salary_fit;
+    const dealbreaker   = c.dealbreaker_hit;
+    const mobilityScore = c.mobility?.mobility_score;
+
+    const matchPills = [];
+
+    if (rubricScore != null) {
+      const cls = rubricScore >= 70 ? "good" : rubricScore >= 45 ? "mid" : "low";
+      matchPills.push(`<span class="match-pill ${cls}">Rubric ${rubricScore}/100</span>`);
+    }
+    if (locationFit != null) {
+      const cls = locationFit >= 70 ? "good" : locationFit >= 45 ? "mid" : "low";
+      matchPills.push(`<span class="match-pill ${cls}">Location ${Math.round(locationFit)}/100</span>`);
+    }
+    if (salaryFitVal && salaryFitVal !== "UNKNOWN") {
+      const cls = salaryFitVal === "MATCH" ? "good" : salaryFitVal === "BELOW_RANGE" ? "mid" : "low";
+      const label = salaryFitVal === "MATCH" ? "Salary ✓" : salaryFitVal === "BELOW_RANGE" ? "Below range" : "Above range";
+      matchPills.push(`<span class="match-pill ${cls}">${label}</span>`);
+    }
+    if (mobilityScore != null) {
+      const cls = mobilityScore >= 60 ? "good" : mobilityScore >= 35 ? "mid" : "low";
+      matchPills.push(`<span class="match-pill ${cls}">Mobility ${mobilityScore}/100</span>`);
+    }
+    if (dealbreaker) {
+      matchPills.push(`<span class="match-pill low">⚠ Dealbreaker hit</span>`);
+    }
+
+    if (matchPills.length) {
+      matchHtml = `<div class="match-section"><span class="match-label">Match</span>${matchPills.join("")}</div>`;
+    }
+
+    // ── Tags (skills / languages) ──────────────────────────────────────────
     const langs = (c.languages || []).slice(0, 4).map(l => l.name);
-    const mobility = c.mobility?.mobility_score;
-    const mobilityLabel = mobility != null ? `Mobility ${mobility}/100` : null;
+    const skills = (c.all_skills || []).slice(0, 5);
+    const tagList = isInternal ? skills : langs;
 
     const scoreClass = score >= 70 ? "score-high" : score >= 45 ? "score-mid" : "score-low";
-    const metaParts = [location, company].filter(Boolean);
+    const metaParts  = [location, company].filter(Boolean);
+    const cardClass  = isInternal ? "candidate-card internal" : "candidate-card";
 
     return `
-      <div class="candidate-card">
-        <div class="candidate-main">
-          <div class="candidate-header">
-            <img class="gh-avatar" src="${avatarUrl}" alt="${escHtml(login)}" onerror="this.style.display='none'" />
-            <div>
-              <div class="candidate-name">${escHtml(name)}</div>
-              <a class="candidate-username" href="https://github.com/${escHtml(login)}" target="_blank">@${escHtml(login)}</a>
-              ${metaParts.length ? `<div class="candidate-meta">${escHtml(metaParts.join(" · "))}</div>` : ""}
+      <div class="${cardClass}">
+        ${sourceBanner}
+        <div class="card-body">
+          <div class="candidate-main">
+            <div class="candidate-header">
+              ${avatarHtml}
+              <div>
+                <div class="candidate-name">${escHtml(name)}</div>
+                ${usernameHtml}
+                ${metaParts.length ? `<div class="candidate-meta">${escHtml(metaParts.join(" · "))}</div>` : ""}
+              </div>
             </div>
+            ${bio ? `<div class="candidate-bio">${escHtml(bio)}</div>` : ""}
+            ${linkedinHtml}
+            ${matchHtml}
+            ${tagList.length ? `<div class="tags">${tagList.map(l => `<span class="tag">${escHtml(l)}</span>`).join("")}</div>` : ""}
           </div>
-          ${bio ? `<div class="candidate-bio">${escHtml(bio)}</div>` : ""}
-          <div class="tags">
-            ${langs.map(l => `<span class="tag">${escHtml(l)}</span>`).join("")}
-            ${mobilityLabel ? `<span class="tag mobility-tag">${escHtml(mobilityLabel)}</span>` : ""}
+          <div class="score-section">
+            <div class="score-circle ${scoreClass}">${score}</div>
+            <div class="score-label">${scoreLabel}</div>
+            <div class="rank-badge">#${rank}</div>
           </div>
-        </div>
-        <div class="score-section">
-          <div class="score-circle ${scoreClass}">${score}</div>
-          <div class="score-label">Score</div>
-          <div class="rank-badge">#${rank}</div>
         </div>
       </div>`;
   }

@@ -58,6 +58,33 @@ class TalentScore(BaseModel):
     hiring_context: Optional[str] = None
 
 
+# ── Talent Brief (job-posting-aware search context) ──────────────────────────
+
+class TalentBrief(BaseModel):
+    """
+    Structured search intent derived from a company_job_postings row.
+    Built once by build_talent_brief(); consumed by search_internal_pool(),
+    search_github(), and score_candidate_rubric().
+    """
+    job_posting_id: str
+    title: str
+    seniority: str                        # junior | mid | senior | lead
+    location: str
+    remote_eligible: bool
+    skills: list[str]
+    hiring_rubric: dict                   # raw JSONB — may be {}
+    rubric_text: str                      # LLM-flattened SEARCH line for GitHub query
+    dealbreaker_text: str                 # comma-separated dealbreakers; "" if none
+    role_weights: dict                    # from role_scoring_config; keys = dimension names
+    salary_min: Optional[float] = None   # EUR equivalent
+    salary_max: Optional[float] = None
+    salary_currency: Optional[str] = None
+    salary_market: Optional[str] = None  # EU | US | REMOTE
+    github_query: str = ""               # pre-translated GitHub search syntax
+    sources: list[str] = Field(default_factory=lambda: ["internal_pool", "github_broad"])
+    source_reasoning: str = ""
+
+
 # ── Mobility / "keen to move" scoring ───────────────────────────────────────
 
 class TenureSignal(BaseModel):
