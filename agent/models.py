@@ -106,6 +106,12 @@ class LinkedInPosition(BaseModel):
     is_current: bool = False
 
 
+class LinkedInEducation(BaseModel):
+    school: Optional[str] = None
+    degree: Optional[str] = None
+    year: Optional[int] = None         # graduation year
+
+
 class LinkedInEnrichment(BaseModel):
     github_username: str
     linkedin_url: Optional[str] = None
@@ -114,8 +120,20 @@ class LinkedInEnrichment(BaseModel):
     current_company: Optional[str] = None
     location: Optional[str] = None
     positions: list[LinkedInPosition] = Field(default_factory=list)
+    education: list[LinkedInEducation] = Field(default_factory=list)
+    languages_spoken: list[str] = Field(default_factory=list)  # e.g. ["English", "German"]
+    open_to_work: bool = False
     fetched_at: Optional[str] = None   # ISO datetime
-    source: str = "orangeslice"
+    source: str = "harvestapi"
+
+
+# ── Career signals (derived from LinkedIn history) ───────────────────────────
+
+class CareerSignals(BaseModel):
+    years_of_experience: Optional[float] = None
+    seniority_level: Optional[str] = None      # junior/mid/senior/staff/lead/exec
+    career_trajectory: Optional[str] = None    # ascending/lateral/descending/insufficient_data
+    has_quantified_outcomes: bool = False
 
 
 # ── Final candidate result ───────────────────────────────────────────────────
@@ -132,7 +150,8 @@ class CandidateResult(BaseModel):
     developer_grade: str
     top_languages: list[str]
 
-    mobility: Optional[MobilityScore] = None   # None if LinkedIn not found
+    mobility: Optional[MobilityScore] = None         # None if LinkedIn not found
+    career_signals: Optional[CareerSignals] = None  # None if LinkedIn not found
 
     summary: str                   # AI-generated 2-sentence recruiter pitch
     red_flags: list[str] = Field(default_factory=list)

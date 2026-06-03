@@ -12,15 +12,13 @@ import asyncio
 import os
 import re
 import threading
-from datetime import datetime, timezone
-from typing import Optional
 
 import httpx
 from strands import tool
 
-from agent.models import LinkedInEnrichment, LinkedInPosition
+from agent.models import LinkedInEnrichment
 from db.linkedin import get_cached_linkedin, upsert_linkedin
-from scoring.mobility_scorer import detect_move_signals
+from scoring.linkedin_analyzer import detect_move_signals, compute_career_signals, parse_harvestapi_response
 
 # Apify actor for LinkedIn profile scraping (harvestapi, no cookies required)
 # https://apify.com/harvestapi/linkedin-profile-scraper
@@ -89,68 +87,9 @@ async def _call_apify(linkedin_url: str) -> dict:
     return items[0]
 
 
-def _parse_apify_response(github_username: str, data: dict) -> LinkedInEnrichment:
-    """Normalise harvestapi linkedin-profile-scraper response into LinkedInEnrichment model.
-
-    harvestapi field mapping (differs from old apify~linkedin-profile-scraper):
-      firstName + lastName  → full_name
-      headline              → current_title fallback
-      location.linkedinText → location
-      currentPosition[]     → used for current role
-      experience[]          → positions (endDate.text == "Present" means is_current)
-    """
-    _MONTH_MAP = {
-        "jan": "01", "feb": "02", "mar": "03", "apr": "04",
-        "may": "05", "jun": "06", "jul": "07", "aug": "08",
-        "sep": "09", "oct": "10", "nov": "11", "dec": "12",
-    }
-
-    def _fmt_date(d: dict) -> Optional[str]:
-        if not d or not d.get("year"):
-            return None
-        m = d.get("month", "")
-        m_str = _MONTH_MAP.get(str(m).lower()[:3], str(m).zfill(2) if str(m).isdigit() else "01")
-        return f"{d['year']}-{m_str}"
-
-    positions = []
-    for pos in data.get("experience", []):
-        start = pos.get("startDate") or {}
-        end = pos.get("endDate") or {}
-
-        start_str = _fmt_date(start)
-        is_current = str(end.get("text", "")).strip().lower() == "present"
-        end_str = None if is_current else _fmt_date(end)
-
-        positions.append(LinkedInPosition(
-            title=pos.get("position", ""),
-            company=pos.get("companyName", ""),
-            start_date=start_str,
-            end_date=end_str,
-            is_current=is_current,
-        ))
-
-    current = next((p for p in positions if p.is_current), None)
-
-    first = data.get("firstName", "") or ""
-    last = data.get("lastName", "") or ""
-    full_name = f"{first} {last}".strip() or None
-
-    location_raw = data.get("location") or {}
-    if isinstance(location_raw, dict):
-        location = location_raw.get("linkedinText") or location_raw.get("text")
-    else:
-        location = location_raw or None
-
-    return LinkedInEnrichment(
-        github_username=github_username,
-        linkedin_url=data.get("linkedinUrl") or data.get("url"),
-        full_name=full_name,
-        current_title=current.title if current else data.get("headline"),
-        current_company=current.company if current else None,
-        location=location,
-        positions=positions,
-        fetched_at=datetime.now(timezone.utc).isoformat(),
-    )
+def _parse_apify_response(github_username: str, data: dict) -> tuple[LinkedInEnrichment, str]:
+    """Thin wrapper — delegates to scoring.linkedin_analyzer.parse_harvestapi_response."""
+    return parse_harvestapi_response(github_username, data)
 
 
 async def _enrich_single(
@@ -158,8 +97,11 @@ async def _enrich_single(
     linkedin_url: str,
     semaphore: asyncio.Semaphore,
     force_refresh: bool = False,
-) -> LinkedInEnrichment:
-    """Enrich a single candidate — cached, with semaphore-controlled concurrency."""
+) -> tuple[LinkedInEnrichment, str]:
+    """Enrich a single candidate — cached, with semaphore-controlled concurrency.
+
+    Returns (enrichment, about_text) where about_text is for career signal scoring only.
+    """
     async with semaphore:
         if not force_refresh:
             cached = get_cached_linkedin(github_username)
@@ -168,7 +110,7 @@ async def _enrich_single(
 
         raw = await _call_apify(linkedin_url)
 
-        enrichment = _parse_apify_response(github_username, raw)
+        enrichment, about_text = _parse_apify_response(github_username, raw)
         mobility = detect_move_signals(enrichment)
 
         upsert_linkedin(
@@ -179,23 +121,25 @@ async def _enrich_single(
             data_completeness=mobility.data_completeness,
         )
 
-        return enrichment
+        return enrichment, about_text
 
 
 async def _enrich_batch(
     candidates: list[dict],
     force_refresh: bool = False,
-) -> list[LinkedInEnrichment | Exception | None]:
+) -> list[tuple[LinkedInEnrichment, str] | Exception | None]:
     """
     Enrich a batch of candidates concurrently.
     - Candidates without a LinkedIn URL are skipped (None returned)
     - Max 5 concurrent Apify calls (semaphore)
-    - 600s overall timeout — returns partial results on timeout
+    - 22s overall timeout — returns partial results on timeout
     - return_exceptions=True — one failure doesn't abort others
+
+    Each result is (enrichment, about_text) | Exception | None.
     """
     semaphore = asyncio.Semaphore(5)
 
-    async def _safe_enrich(c: dict) -> LinkedInEnrichment | Exception | None:
+    async def _safe_enrich(c: dict) -> tuple[LinkedInEnrichment, str] | Exception | None:
         login = c["profile"]["login"]
         linkedin_url = _extract_linkedin_url(c)
         if not linkedin_url:
@@ -242,28 +186,39 @@ def enrich_linkedin(
     """
     enrichments = _run_in_thread(_enrich_batch(candidates, force_refresh=force_refresh))
 
-    enrichment_map: dict[str, LinkedInEnrichment] = {}
+    # Build map from username → (enrichment, about_text)
+    enrichment_map: dict[str, tuple[LinkedInEnrichment, str]] = {}
     for e in enrichments:
-        if isinstance(e, LinkedInEnrichment):
-            enrichment_map[e.github_username] = e
+        if isinstance(e, tuple):
+            enrichment, about_text = e
+            enrichment_map[enrichment.github_username] = (enrichment, about_text)
 
     result = []
     for profile in candidates:
         login = profile["profile"]["login"]
-        enrichment = enrichment_map.get(login)
+        pair = enrichment_map.get(login)
 
         entry = dict(profile)
-        if enrichment:
+        if pair:
+            enrichment, about_text = pair
             mobility = detect_move_signals(enrichment)
+            career_signals = compute_career_signals(enrichment, about_text)
+
+            if not enrichment.location:
+                enrichment.location = profile.get("profile", {}).get("location")
+
             linkedin_data = enrichment.model_dump()
             # Cap positions to last 5 — full history can be 15+ roles per candidate
             if linkedin_data.get("positions"):
                 linkedin_data["positions"] = linkedin_data["positions"][:5]
+
             entry["linkedin"] = linkedin_data
             entry["mobility"] = mobility.model_dump()
+            entry["career_signals"] = career_signals.model_dump()
         else:
             entry["linkedin"] = None
             entry["mobility"] = None
+            entry["career_signals"] = None
 
         result.append(entry)
 

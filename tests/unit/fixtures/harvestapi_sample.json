@@ -1,0 +1,47 @@
+{
+  "_comment": "Sample harvestapi linkedin-profile-scraper response for unit tests.",
+  "firstName": "Jane",
+  "lastName": "Doe",
+  "headline": "Senior Software Engineer at TechCorp",
+  "linkedinUrl": "https://www.linkedin.com/in/jane-doe",
+  "location": {
+    "linkedinText": "San Francisco, CA, United States"
+  },
+  "openToWork": false,
+  "about": "Reduced API latency by 40% for 50k daily users. Led a team of 8 engineers to deliver a distributed caching system that saved $200k annually.",
+  "experience": [
+    {
+      "position": "Senior Software Engineer",
+      "companyName": "TechCorp",
+      "startDate": {"year": 2022, "month": "Jun"},
+      "endDate": {"text": "Present"},
+      "description": "Reduced API latency by 40% serving 50k daily users. Led migration to microservices."
+    },
+    {
+      "position": "Software Engineer",
+      "companyName": "StartupXYZ",
+      "startDate": {"year": 2020, "month": "Jan"},
+      "endDate": {"year": 2022, "month": "May", "text": "May 2022"},
+      "description": "Built core payment processing system handling $2M monthly revenue."
+    },
+    {
+      "position": "Junior Developer",
+      "companyName": "AgencyABC",
+      "startDate": {"year": 2018, "month": "Sep"},
+      "endDate": {"year": 2019, "month": "Dec", "text": "Dec 2019"},
+      "description": ""
+    }
+  ],
+  "languages": [
+    {"name": "English", "proficiency": "Native or bilingual proficiency"},
+    {"name": "German", "proficiency": "Professional working proficiency"}
+  ],
+  "education": [
+    {
+      "schoolName": "Stanford University",
+      "degreeName": "Bachelor of Science",
+      "fieldOfStudy": "Computer Science",
+      "endDate": {"year": 2018}
+    }
+  ]
+}
