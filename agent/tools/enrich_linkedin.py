@@ -22,9 +22,9 @@ from agent.models import LinkedInEnrichment, LinkedInPosition
 from db.linkedin import get_cached_linkedin, upsert_linkedin
 from scoring.mobility_scorer import detect_move_signals
 
-# Apify actor for LinkedIn profile scraping
-# https://apify.com/apify/linkedin-profile-scraper
-APIFY_ACTOR = "apify~linkedin-profile-scraper"
+# Apify actor for LinkedIn profile scraping (harvestapi, no cookies required)
+# https://apify.com/harvestapi/linkedin-profile-scraper
+APIFY_ACTOR = "harvestapi~linkedin-profile-scraper"
 
 
 def _run_in_thread(coro):
@@ -68,16 +68,17 @@ def _extract_linkedin_url(profile: dict) -> Optional[str]:
 
 async def _call_apify(linkedin_url: str) -> dict:
     """
-    Run the Apify LinkedIn profile scraper synchronously and return the first result.
-    Docs: https://apify.com/apify/linkedin-profile-scraper
+    Run the Apify harvestapi LinkedIn profile scraper and return the first result.
+    Docs: https://apify.com/harvestapi/linkedin-profile-scraper
+    Input: {"urls": ["https://linkedin.com/in/..."]}
     """
     api_token = os.environ["APIFY_API_TOKEN"]
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
             f"https://api.apify.com/v2/acts/{APIFY_ACTOR}/run-sync-get-dataset-items",
             params={"token": api_token},
-            json={"profileUrls": [linkedin_url]},
+            json={"urls": [linkedin_url]},
         )
         resp.raise_for_status()
         items = resp.json()
@@ -89,33 +90,64 @@ async def _call_apify(linkedin_url: str) -> dict:
 
 
 def _parse_apify_response(github_username: str, data: dict) -> LinkedInEnrichment:
-    """Normalise Apify linkedin-profile-scraper response into LinkedInEnrichment model."""
+    """Normalise harvestapi linkedin-profile-scraper response into LinkedInEnrichment model.
+
+    harvestapi field mapping (differs from old apify~linkedin-profile-scraper):
+      firstName + lastName  → full_name
+      headline              → current_title fallback
+      location.linkedinText → location
+      currentPosition[]     → used for current role
+      experience[]          → positions (endDate.text == "Present" means is_current)
+    """
+    _MONTH_MAP = {
+        "jan": "01", "feb": "02", "mar": "03", "apr": "04",
+        "may": "05", "jun": "06", "jul": "07", "aug": "08",
+        "sep": "09", "oct": "10", "nov": "11", "dec": "12",
+    }
+
+    def _fmt_date(d: dict) -> Optional[str]:
+        if not d or not d.get("year"):
+            return None
+        m = d.get("month", "")
+        m_str = _MONTH_MAP.get(str(m).lower()[:3], str(m).zfill(2) if str(m).isdigit() else "01")
+        return f"{d['year']}-{m_str}"
+
     positions = []
-    for pos in data.get("positions", {}).get("items", []):
+    for pos in data.get("experience", []):
         start = pos.get("startDate") or {}
         end = pos.get("endDate") or {}
 
-        start_str = f"{start.get('year', '')}-{str(start.get('month', '')).zfill(2)}" if start.get("year") else None
-        end_str = f"{end.get('year', '')}-{str(end.get('month', '')).zfill(2)}" if end.get("year") else None
+        start_str = _fmt_date(start)
+        is_current = str(end.get("text", "")).strip().lower() == "present"
+        end_str = None if is_current else _fmt_date(end)
 
         positions.append(LinkedInPosition(
-            title=pos.get("title", ""),
+            title=pos.get("position", ""),
             company=pos.get("companyName", ""),
             start_date=start_str,
             end_date=end_str,
-            is_current=pos.get("isCurrent", False),
+            is_current=is_current,
         ))
 
-    # Current position from most recent role
     current = next((p for p in positions if p.is_current), None)
+
+    first = data.get("firstName", "") or ""
+    last = data.get("lastName", "") or ""
+    full_name = f"{first} {last}".strip() or None
+
+    location_raw = data.get("location") or {}
+    if isinstance(location_raw, dict):
+        location = location_raw.get("linkedinText") or location_raw.get("text")
+    else:
+        location = location_raw or None
 
     return LinkedInEnrichment(
         github_username=github_username,
         linkedin_url=data.get("linkedinUrl") or data.get("url"),
-        full_name=data.get("fullName"),
+        full_name=full_name,
         current_title=current.title if current else data.get("headline"),
         current_company=current.company if current else None,
-        location=data.get("location"),
+        location=location,
         positions=positions,
         fetched_at=datetime.now(timezone.utc).isoformat(),
     )
