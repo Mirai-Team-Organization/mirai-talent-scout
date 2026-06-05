@@ -91,6 +91,113 @@ def apply_hiring_context(
     })
 
 
+# City → ISO country code (lowercase) for cities commonly used as bare target strings.
+# Expands same-country matching when the target has no ", Country" suffix.
+_CITY_COUNTRY: dict[str, str] = {
+    "milan": "it", "milano": "it",
+    "rome": "it", "roma": "it",
+    "turin": "it", "torino": "it",
+    "florence": "it", "firenze": "it",
+    "bologna": "it", "naples": "it", "napoli": "it",
+    "genoa": "it", "palermo": "it", "bari": "it",
+    "zurich": "ch", "zürich": "ch", "zuerich": "ch",
+    "geneva": "ch", "genève": "ch", "geneve": "ch",
+    "basel": "ch", "bern": "ch", "lausanne": "ch", "lugano": "ch",
+    "paris": "fr", "lyon": "fr", "marseille": "fr",
+    "berlin": "de", "munich": "de", "münchen": "de", "hamburg": "de",
+    "madrid": "es", "barcelona": "es",
+    "amsterdam": "nl", "rotterdam": "nl",
+    "london": "gb", "manchester": "gb", "edinburgh": "gb",
+    "new york": "us", "san francisco": "us", "los angeles": "us",
+    "chicago": "us", "seattle": "us", "austin": "us", "boston": "us",
+    # India
+    "mumbai": "in", "bangalore": "in", "bengaluru": "in", "delhi": "in",
+    "new delhi": "in", "hyderabad": "in", "pune": "in", "chennai": "in",
+    "gurgaon": "in", "gurugram": "in", "noida": "in", "kolkata": "in",
+    # China
+    "beijing": "cn", "shanghai": "cn", "shenzhen": "cn", "guangzhou": "cn",
+    # Others
+    "toronto": "ca", "vancouver": "ca", "montreal": "ca",
+    "sydney": "au", "melbourne": "au",
+    "tokyo": "jp", "osaka": "jp",
+    "seoul": "kr", "busan": "kr",
+    "singapore": "sg",
+    "dubai": "ae", "abu dhabi": "ae",
+    "moscow": "ru", "saint petersburg": "ru",
+    "warsaw": "pl", "krakow": "pl",
+    "istanbul": "tr", "ankara": "tr",
+    "tel aviv": "il",
+    "sao paulo": "br", "rio de janeiro": "br",
+    "buenos aires": "ar",
+    "bogota": "co",
+}
+
+# Country name/suffix → ISO code
+_COUNTRY_ALIAS: dict[str, str] = {
+    "italy": "it", "italia": "it",
+    "switzerland": "ch", "schweiz": "ch", "svizzera": "ch",
+    "france": "fr", "germany": "de", "deutschland": "de",
+    "spain": "es", "españa": "es",
+    "netherlands": "nl", "holland": "nl",
+    "uk": "gb", "united kingdom": "gb", "england": "gb",
+    "united states": "us", "usa": "us",
+    "india": "in",
+    "china": "cn",
+    "japan": "jp",
+    "brazil": "br", "brasil": "br",
+    "canada": "ca",
+    "australia": "au",
+    "russia": "ru", "россия": "ru",
+    "ukraine": "ua",
+    "poland": "pl", "polska": "pl",
+    "portugal": "pt",
+    "romania": "ro",
+    "hungary": "hu",
+    "czech republic": "cz", "czechia": "cz",
+    "austria": "at", "österreich": "at",
+    "sweden": "se", "sverige": "se",
+    "norway": "no", "norge": "no",
+    "denmark": "dk", "danmark": "dk",
+    "finland": "fi",
+    "belgium": "be", "belgique": "be",
+    "turkey": "tr", "türkiye": "tr",
+    "israel": "il",
+    "singapore": "sg",
+    "indonesia": "id",
+    "pakistan": "pk",
+    "bangladesh": "bd",
+    "nigeria": "ng",
+    "egypt": "eg",
+    "south africa": "za",
+    "mexico": "mx", "méxico": "mx",
+    "argentina": "ar",
+    "colombia": "co",
+    "chile": "cl",
+    "south korea": "kr", "korea": "kr",
+    "taiwan": "tw",
+    "vietnam": "vn", "viet nam": "vn",
+    "thailand": "th",
+    "malaysia": "my",
+    "philippines": "ph",
+    "new zealand": "nz",
+    "ireland": "ie",
+    "greece": "gr",
+    "serbia": "rs",
+    "croatia": "hr",
+    "slovakia": "sk",
+    "bulgaria": "bg",
+    "latvia": "lv",
+    "lithuania": "lt",
+    "estonia": "ee",
+}
+
+
+def _to_country_code(s: str) -> str | None:
+    """Return ISO code for a location token (city name or country name), or None."""
+    s = s.lower().strip()
+    return _CITY_COUNTRY.get(s) or _COUNTRY_ALIAS.get(s)
+
+
 def _score_location(target: str | None, candidate: str | None) -> float | None:
     if not target:
         return None
@@ -105,10 +212,24 @@ def _score_location(target: str | None, candidate: str | None) -> float | None:
     if t in c or c in t:
         return 90.0
 
-    # Same country heuristic — check last token
-    t_country = t.split(",")[-1].strip()
-    c_country = c.split(",")[-1].strip()
+    # Same country heuristic — try last-comma token, then city lookup.
+    t_tokens = [tok.strip() for tok in t.split(",")]
+    c_tokens = [tok.strip() for tok in c.split(",")]
+
+    t_country = t_tokens[-1] if len(t_tokens) > 1 else None
+    c_country = c_tokens[-1] if len(c_tokens) > 1 else None
+
+    # Compare extracted country tokens
     if t_country and c_country and t_country == c_country:
         return 70.0
 
-    return 10.0
+    # Fall back to city→ISO lookup for bare city targets (e.g. "Milan" vs "Rome, Italy")
+    t_iso = _to_country_code(t_tokens[0]) or (t_country and _to_country_code(t_country))
+    c_iso = _to_country_code(c_tokens[0]) or (c_country and _to_country_code(c_country))
+    if t_iso and c_iso:
+        if t_iso == c_iso:
+            return 70.0  # same country, different city
+        return 10.0      # confirmed different country
+
+    # Can't determine — return None so hard-gates don't fire on ambiguous data
+    return None

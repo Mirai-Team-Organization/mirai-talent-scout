@@ -1,5 +1,5 @@
 """
-LinkedIn enrichment cache — 30-day TTL.
+LinkedIn enrichment cache — 90-day TTL.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from typing import Optional
 from db.client import get_supabase
 
 
-TTL_DAYS = 30
+TTL_DAYS = 90
 
 
 def get_cached_linkedin(github_username: str) -> Optional[dict]:

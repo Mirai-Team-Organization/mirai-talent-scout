@@ -1,0 +1,232 @@
+# promptfoo rubric-scoring evaluation
+#
+# Install: npm install -g promptfoo
+# Run:     cd tests/prompts && promptfoo eval
+# View:    promptfoo view
+#
+# This evaluates the _SCORE_SYSTEM prompt from score_candidate_rubric.py
+# against all cases in fixtures/cases.json.
+#
+# Use this to:
+#  - Compare prompt versions (add a new entry under `prompts:` and re-run)
+#  - Track accuracy after prompt edits before deploying
+#  - Add new test cases from real job applications in Supabase
+
+description: "Rubric scoring prompt — dealbreaker + per-criterion accuracy"
+
+providers:
+  - id: bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0
+    label: haiku-4-5-eu
+    config:
+      region: eu-west-1
+      temperature: 0
+      max_tokens: 900
+
+prompts:
+  # v1 — current prompt (matches _SCORE_SYSTEM in score_candidate_rubric.py)
+  - label: rubric-score-v1
+    raw: |
+      <system>
+      You are a senior technical recruiter evaluating a candidate against a job posting.
+
+      The candidate summary includes their job title, GitHub activity, and a "Career history" section with role titles, companies, dates, and work descriptions scraped from LinkedIn. Use ALL of this — especially the role descriptions — as evidence when scoring criteria.
+
+      Output a single JSON object with:
+        "dealbreaker": true or false  — true if the candidate hits ANY of the listed dealbreakers
+        "criteria": array of objects, one per requirement:
+          "criterion": the requirement text (copy exactly)
+          "verdict":   "YES", "PARTIAL", or "NO"
+          "reason":    one sentence max 20 words citing the evidence (role, skill, or project)
+
+      Verdict guide:
+        YES     = candidate clearly demonstrates this in their history or GitHub work
+        PARTIAL = adjacent skill, relevant experience but not an exact match, or implied by context
+        NO      = no evidence in either LinkedIn history or GitHub activity
+
+      Be strict: if the role requires backend development and the candidate has no backend titles, projects, or descriptions mentioning backend work, score NO — not PARTIAL.
+      If dealbreakers is empty string, set dealbreaker=false.
+
+      Return ONLY the JSON object. No markdown fences.
+      </system>
+
+      Dealbreakers: {{dealbreakers}}
+
+      Requirements:
+      {{criteria_numbered}}
+
+      Candidate:
+      {{candidate_summary}}
+
+# Tests are loaded from fixtures/cases.json via the `tests` key below.
+# Each case maps to one promptfoo test with multiple assertions.
+
+tests:
+  # ── Case 1: Strong backend match ─────────────────────────────────────────────
+  - description: "backend_strong_match — all criteria should pass"
+    vars:
+      dealbreakers: "no Python or Go experience; no backend API development"
+      criteria_numbered: |
+        1. 5+ years backend development experience
+        2. Proficiency in Python or Go
+        3. Experience designing REST or gRPC APIs
+        4. Worked with distributed systems or microservices
+        5. Experience with PostgreSQL or another relational database
+      candidate_summary: |
+        João Silva. Backend engineer focused on Python and distributed systems. LinkedIn: Senior Backend Engineer @ Stripe. Career history:
+        - Senior Backend Engineer at Stripe (2021-03–present): Designed gRPC and REST payment APIs in Python/Go handling 2M+ TPS. Led migration from monolith to microservices across 6 services.
+        - Backend Engineer at N26 (2018-07–2021-02): Built Python FastAPI services for banking platform. Owned PostgreSQL schema design and query optimisation for 5M user accounts.
+        - Junior Python Developer at Freelance (2016-01–2018-06): Built Django REST backends for e-commerce clients.
+        GitHub: 620 commits, 14 OSS repos. Years of experience: 9.2. Seniority (LinkedIn): senior. Career trajectory: ascending. Location: Berlin, Germany.
+    assert:
+      - type: is-json
+      - type: javascript
+        value: |
+          const data = JSON.parse(output);
+          if (data.dealbreaker !== false) return { pass: false, score: 0, reason: `expected dealbreaker=false, got ${data.dealbreaker}` };
+          return { pass: true, score: 1 };
+      - type: javascript
+        value: |
+          const data = JSON.parse(output);
+          const map = Object.fromEntries((data.criteria || []).map(c => [c.criterion, c.verdict]));
+          const checks = [
+            ["5+ years backend development experience", "YES"],
+            ["Proficiency in Python or Go", "YES"],
+            ["Experience designing REST or gRPC APIs", "YES"],
+            ["Worked with distributed systems or microservices", "YES"],
+          ];
+          const fails = checks.filter(([c, v]) => map[c] !== v).map(([c, v]) => `'${c}': expected ${v}, got ${map[c]}`);
+          if (fails.length) return { pass: false, score: 0, reason: fails.join('; ') };
+          return { pass: true, score: 1 };
+
+  # ── Case 2: Frontend dev vs backend role — must hit dealbreaker ───────────────
+  - description: "frontend_vs_backend_role — should hit dealbreaker"
+    vars:
+      dealbreakers: "no Python or Go experience; no backend API development"
+      criteria_numbered: |
+        1. 5+ years backend development experience
+        2. Proficiency in Python or Go
+        3. Experience designing REST or gRPC APIs
+        4. Worked with distributed systems or microservices
+        5. Experience with PostgreSQL or another relational database
+      candidate_summary: |
+        Anna Müller. Frontend engineer. LinkedIn: Senior Frontend Engineer @ Zalando. Career history:
+        - Senior Frontend Engineer at Zalando (2020-04–present): Built React component library used by 30 squads. Led migration from Redux to Zustand. Performance optimisation reduced bundle size by 35%.
+        - Frontend Developer at Delivery Hero (2017-09–2020-03): Vue.js SPA development. Worked with REST APIs built by backend team but did not author any backend code.
+        - UI Developer at Agency (2015-01–2017-08): HTML/CSS/JavaScript, jQuery.
+        Languages: JavaScript, TypeScript, CSS. GitHub: 310 commits, 5 OSS repos. Years of experience: 10.1. Seniority (LinkedIn): senior. Career trajectory: ascending. Location: Berlin, Germany.
+    assert:
+      - type: is-json
+      - type: javascript
+        value: |
+          const data = JSON.parse(output);
+          if (data.dealbreaker !== true) return { pass: false, score: 0, reason: `frontend dev should hit dealbreaker, got dealbreaker=${data.dealbreaker}` };
+          return { pass: true, score: 1 };
+
+  # ── Case 3: Strong ML match ───────────────────────────────────────────────────
+  - description: "ml_strong_match — all ML criteria should pass"
+    vars:
+      dealbreakers: "no Python; no experience training ML models; no production ML deployment"
+      criteria_numbered: |
+        1. 3+ years applied machine learning experience
+        2. Proficiency in Python and PyTorch or TensorFlow
+        3. Experience training and evaluating large models
+        4. Production ML deployment experience (serving, monitoring)
+        5. Familiarity with data pipelines and feature engineering
+      candidate_summary: |
+        Lena Fischer. ML engineer specialising in NLP and recommendation systems. LinkedIn: Staff ML Engineer @ Spotify. Career history:
+        - Staff ML Engineer at Spotify (2022-01–present): Led training of transformer-based playlist recommendation model (500M params, PyTorch). Deployed to production serving 400M users via TorchServe. Reduced P99 latency by 30%.
+        - Senior ML Engineer at Klarna (2019-06–2021-12): Built fraud detection models (XGBoost, LightGBM). Owned feature store pipeline (Feast + Spark). Model served 1M daily transactions.
+        - ML Engineer at Research Lab (2017-03–2019-05): TensorFlow model training for image classification.
+        Languages: Python, Scala. GitHub: 480 commits, 9 OSS repos. Years of experience: 8.5. Seniority (LinkedIn): staff. Career trajectory: ascending. Location: Stockholm, Sweden.
+    assert:
+      - type: is-json
+      - type: javascript
+        value: |
+          const data = JSON.parse(output);
+          if (data.dealbreaker !== false) return { pass: false, score: 0, reason: `expected dealbreaker=false` };
+          const map = Object.fromEntries((data.criteria || []).map(c => [c.criterion, c.verdict]));
+          const checks = [
+            ["3+ years applied machine learning experience", "YES"],
+            ["Proficiency in Python and PyTorch or TensorFlow", "YES"],
+            ["Production ML deployment experience (serving, monitoring)", "YES"],
+          ];
+          const fails = checks.filter(([c, v]) => map[c] !== v).map(([c, v]) => `'${c}': expected ${v}, got ${map[c]}`);
+          if (fails.length) return { pass: false, score: 0, reason: fails.join('; ') };
+          return { pass: true, score: 1 };
+
+  # ── Case 4: Data analyst vs ML role — must hit dealbreaker ───────────────────
+  - description: "data_analyst_vs_ml_role — should hit dealbreaker"
+    vars:
+      dealbreakers: "no Python; no experience training ML models; no production ML deployment"
+      criteria_numbered: |
+        1. 3+ years applied machine learning experience
+        2. Proficiency in Python and PyTorch or TensorFlow
+        3. Experience training and evaluating large models
+        4. Production ML deployment experience (serving, monitoring)
+        5. Familiarity with data pipelines and feature engineering
+      candidate_summary: |
+        Marco Rossi. Data analyst focused on business intelligence and reporting. LinkedIn: Senior Data Analyst @ MediaCom. Career history:
+        - Senior Data Analyst at MediaCom (2020-03–present): Built Tableau dashboards for marketing KPIs. SQL query optimisation across BigQuery. Coordinated with data engineering team for ETL pipeline scheduling.
+        - Data Analyst at Publicis (2017-10–2020-02): Excel/PowerBI reporting, Google Analytics. No programming or ML work.
+        Languages: SQL. GitHub: 22 commits, 0 OSS repos. Years of experience: 8.0. Seniority (LinkedIn): mid. Career trajectory: lateral. Location: Milan, Italy.
+    assert:
+      - type: is-json
+      - type: javascript
+        value: |
+          const data = JSON.parse(output);
+          if (data.dealbreaker !== true) return { pass: false, score: 0, reason: `data analyst should hit ML dealbreaker, got ${data.dealbreaker}` };
+          return { pass: true, score: 1 };
+
+  # ── Case 5: Junior backend vs senior role — partial on experience ─────────────
+  - description: "junior_backend_vs_senior_role — experience NO, stack YES"
+    vars:
+      dealbreakers: "no Python or Go experience"
+      criteria_numbered: |
+        1. 5+ years backend development experience
+        2. Proficiency in Python or Go
+        3. Experience designing REST APIs
+        4. Worked with relational databases
+        5. Team leadership or mentoring experience
+      candidate_summary: |
+        Carlos López. Junior backend developer. LinkedIn: Backend Developer @ FinStart. Career history:
+        - Backend Developer at FinStart (2023-02–present): Built Python FastAPI endpoints for payments module. PostgreSQL schema work under senior guidance. No team leadership responsibilities.
+        - Intern at consultancy (2022-06–2023-01): Python scripting, minor REST API work.
+        Languages: Python, SQL. GitHub: 180 commits, 2 OSS repos. Years of experience: 2.3. Seniority (LinkedIn): junior. Career trajectory: ascending. Location: Madrid, Spain.
+    assert:
+      - type: is-json
+      - type: javascript
+        value: |
+          const data = JSON.parse(output);
+          if (data.dealbreaker !== false) return { pass: false, score: 0, reason: `should not hit dealbreaker (has Python)` };
+          const map = Object.fromEntries((data.criteria || []).map(c => [c.criterion, c.verdict]));
+          if (map["5+ years backend development experience"] !== "NO")
+            return { pass: false, score: 0, reason: `2-year dev should get NO on 5+ years, got ${map["5+ years backend development experience"]}` };
+          if (map["Proficiency in Python or Go"] !== "YES")
+            return { pass: false, score: 0, reason: `Python dev should get YES on Python, got ${map["Proficiency in Python or Go"]}` };
+          if (map["Team leadership or mentoring experience"] !== "NO")
+            return { pass: false, score: 0, reason: `no leadership = NO, got ${map["Team leadership or mentoring experience"]}` };
+          return { pass: true, score: 1 };
+
+  # ── Case 6: DevOps vs backend role — should hit dealbreaker ──────────────────
+  - description: "devops_vs_backend_role — infra Python ≠ backend, should hit dealbreaker"
+    vars:
+      dealbreakers: "no Python or Go experience; no backend API development"
+      criteria_numbered: |
+        1. 5+ years backend development experience
+        2. Proficiency in Python or Go
+        3. Experience designing REST or gRPC APIs
+        4. Worked with distributed systems or microservices
+        5. Experience with PostgreSQL or another relational database
+      candidate_summary: |
+        Priya Sharma. Platform and infrastructure engineer. LinkedIn: Senior DevOps Engineer @ Booking.com. Career history:
+        - Senior DevOps Engineer at Booking.com (2020-01–present): Kubernetes cluster management (500 nodes), Terraform IaC, Helm chart authoring. Python scripting for automation and runbooks. No product service development.
+        - DevOps Engineer at ING (2017-05–2019-12): CI/CD pipelines (Jenkins, GitLab), monitoring (Prometheus/Grafana). Shell and Python automation scripts.
+        - Systems Administrator at hosting firm (2015-01–2017-04): Linux server management.
+        Languages: Python (scripting only), Bash, HCL. GitHub: 290 commits, 4 OSS repos. Years of experience: 10.0. Seniority (LinkedIn): senior. Career trajectory: lateral. Location: Amsterdam, Netherlands.
+    assert:
+      - type: is-json
+      - type: javascript
+        value: |
+          const data = JSON.parse(output);
+          if (data.dealbreaker !== true) return { pass: false, score: 0, reason: `DevOps-only candidate should hit backend dealbreaker` };
+          return { pass: true, score: 1 };

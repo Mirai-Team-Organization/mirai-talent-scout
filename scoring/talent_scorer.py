@@ -1,12 +1,15 @@
 """
 Python port of gitcheck-webapp/src/lib/talentScoring.ts
 
-Weights:
-  Tech Stack     30%  (top languages by code volume)
-  Open Source    25%  (contributions to repos user doesn't own)
-  Consistency    20%  (active days + longest streak, past 12 months)
-  Collaboration  15%  (PRs + PR reviews)
-  Presentation   10%  (bio, README, pinned repos)
+Weights (presentation removed — only technical activity signals count for indexing):
+  Tech Stack     33%  (top languages by code volume)
+  Open Source    28%  (contributions to repos user doesn't own)
+  Consistency    22%  (active days + longest streak, past 12 months)
+  Collaboration  17%  (PRs + PR reviews)
+
+Presentation is still computed and stored in the breakdown for display purposes
+but does NOT contribute to the overall score. Only profiles scoring B- or above
+(overall >= 42) are accepted into the talent index.
 
 IMPORTANT: Any change to weights or scoring logic here MUST be mirrored in the
 TypeScript implementation. Run `pytest tests/parity/` to verify alignment.
@@ -72,17 +75,18 @@ def _score_tech_stack(profile: dict) -> TechStackScore:
     return TechStackScore(score=round(score, 1), top_languages=top_langs)
 
 
-# ── Open source score (25%) ───────────────────────────────────────────────────
+# ── Open source score (28%) ───────────────────────────────────────────────────
+# Uses the integer fields from the contributions dict (as returned by _parse_profile):
+#   openSourceRepoCount — number of distinct repos the user contributed to but doesn't own
+#   commits             — total commit contributions (proxy for depth of activity)
 
 def _score_open_source(profile: dict) -> OpenSourceScore:
     contributions: dict = profile.get("contributions", {})
-    open_source_contribs: list[dict] = contributions.get("openSource", [])
+    repo_count  = contributions.get("openSourceRepoCount", 0)
+    commit_count = contributions.get("commits", 0)
 
-    repo_count = len({c.get("repo", {}).get("name") for c in open_source_contribs})
-    commit_count = sum(c.get("count", 0) for c in open_source_contribs)
-
-    # Normalize: 50 commits across 5 repos → ~80 score
-    repo_score = _cdf_exponential(repo_count, rate=0.15) * 50
+    # Normalize: 5 repos → ~50 pts; 50 commits → ~50 pts
+    repo_score   = _cdf_exponential(repo_count,   rate=0.15) * 50
     commit_score = _cdf_exponential(commit_count, rate=0.02) * 50
     score = repo_score + commit_score
 
@@ -93,26 +97,24 @@ def _score_open_source(profile: dict) -> OpenSourceScore:
     )
 
 
-# ── Consistency score (20%) ───────────────────────────────────────────────────
+# ── Consistency score (22%) ───────────────────────────────────────────────────
+# dailyActivity is deliberately not fetched (365 records/candidate bloats context).
+# We use totalContributions from the contributionCalendar as a proxy.
+# Calibration: ~2 contributions per active day → 400 total ≈ 200 active days.
 
 def _score_consistency(profile: dict) -> ConsistencyScore:
     heatmap: dict = profile.get("activityHeatmap", {})
-    daily: list[dict] = heatmap.get("dailyActivity", [])
+    total = heatmap.get("totalContributions", 0)
 
-    active_days = sum(1 for d in daily if d.get("count", 0) > 0)
+    # Estimated active days: contributions / 2, capped at 365
+    active_days = min(int(total / 2), 365)
 
-    # Compute longest streak
-    streak = 0
-    current_streak = 0
-    for d in daily:
-        if d.get("count", 0) > 0:
-            current_streak += 1
-            streak = max(streak, current_streak)
-        else:
-            current_streak = 0
+    # Streak proxy: average contributions/day; >= 1/day suggests sustained streaks
+    avg_daily = total / 365
+    streak = min(30, int(avg_daily * 30))  # maps 1.0 avg → full 30-day streak estimate
 
-    base_score = (active_days / 365) * 80
-    streak_bonus = 20.0 if streak > 30 else (streak / 30) * 20
+    base_score   = (active_days / 365) * 80
+    streak_bonus = 20.0 if streak >= 30 else (streak / 30) * 20
     score = min(base_score + streak_bonus, 100.0)
 
     return ConsistencyScore(
@@ -173,12 +175,13 @@ def calculate_talent_score(profile: dict, hiring_context: str | None = None) -> 
     collab = _score_collaboration(profile)
     presentation = _score_presentation(profile)
 
+    # Presentation excluded from overall — only technical activity signals matter.
+    # Weights redistributed proportionally (30+25+20+15 → 33+28+22+17).
     overall = (
-        tech.score * 0.30 +
-        oss.score * 0.25 +
-        consistency.score * 0.20 +
-        collab.score * 0.15 +
-        presentation.score * 0.10
+        tech.score * 0.33 +
+        oss.score * 0.28 +
+        consistency.score * 0.22 +
+        collab.score * 0.17
     )
 
     grade = score_to_grade(overall)

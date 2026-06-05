@@ -164,25 +164,28 @@ def search_internal_pool(
     }
     accepted_tiers = _ADJACENT.get(seniority, {"mid"})
 
-    # ── First word of the title for fuzzy match (e.g. "AI" from "AI Engineer") ─
-    title_keyword = title.split()[0] if title else "engineer"
+    # ── Build OR filter across title words + top skills ──────────────────────
+    _STOP_WORDS = {"engineer", "developer", "and", "or", "the", "a", "in", "for"}
+    title_words = [w for w in title.split() if w.lower() not in _STOP_WORDS] if title else []
+    if not title_words:
+        title_words = title.split()[:1] or ["engineer"]
 
-    # ── Primary query: jobRole ILIKE + seniority filter ───────────────────────
-    # We filter seniority client-side (profile_data->>'seniority' is free-text)
-    # Supabase .ilike on JSON path: filter('profile_data->>jobRole', 'ilike', pattern)
+    keywords = title_words[:3] + (skills[:2] if len(title_words) < 2 else [])
+    # Supabase OR filter: "col.ilike.%v1%,col.ilike.%v2%"
+    or_filter = ",".join(f"profile_data->>jobRole.ilike.%{kw}%" for kw in keywords)
+
     try:
         result = (
             sb.table("user_working_profiles")
             .select("user_id, profile_data, users(email, nome, cognome, profile_img_url, location_city, location_country, azienda)")
-            .ilike("profile_data->>jobRole", f"%{title_keyword}%")
-            .limit(limit * 3)  # over-fetch to allow seniority filtering
+            .or_(or_filter)
+            .limit(limit * 3)
             .execute()
         )
+        rows = result.data or []
     except Exception as e:
-        print(f"[search_internal_pool] Primary query failed: {e}")
-        return []
-
-    rows = result.data or []
+        print(f"[search_internal_pool] Query failed: {e}")
+        rows = []
 
     # ── Client-side seniority filter ──────────────────────────────────────────
     filtered = []
@@ -191,26 +194,6 @@ def search_internal_pool(
         raw_seniority = pd.get("seniority") or pd.get("experienceLevel") or ""
         if raw_seniority.lower().strip() in accepted_tiers or not raw_seniority:
             filtered.append(row)
-
-    # ── If thin results, try skills-based fallback ────────────────────────────
-    if len(filtered) < 5 and skills:
-        primary_skill = skills[0]
-        try:
-            fallback = (
-                sb.table("user_working_profiles")
-                .select("user_id, profile_data, users(email, nome, cognome, profile_img_url, location_city, location_country, azienda)")
-                .ilike("profile_data->>jobRole", f"%{primary_skill}%")
-                .limit(limit * 2)
-                .execute()
-            )
-            # Merge, deduplicating by user_id
-            seen_ids = {r["user_id"] for r in filtered}
-            for row in (fallback.data or []):
-                if row["user_id"] not in seen_ids:
-                    filtered.append(row)
-                    seen_ids.add(row["user_id"])
-        except Exception as e:
-            print(f"[search_internal_pool] Skills fallback failed: {e}")
 
     # ── Map to unified profile shape ──────────────────────────────────────────
     profiles = []

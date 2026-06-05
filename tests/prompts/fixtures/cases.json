@@ -1,0 +1,153 @@
+[
+  {
+    "id": "backend_strong_match",
+    "description": "Senior Python backend dev applying for senior backend role — should pass all criteria",
+    "dealbreakers": "no Python or Go experience; no backend API development",
+    "criteria": [
+      "5+ years backend development experience",
+      "Proficiency in Python or Go",
+      "Experience designing REST or gRPC APIs",
+      "Worked with distributed systems or microservices",
+      "Experience with PostgreSQL or another relational database"
+    ],
+    "candidate_summary": "João Silva. Backend engineer focused on Python and distributed systems. LinkedIn: Senior Backend Engineer @ Stripe. Career history:\n- Senior Backend Engineer at Stripe (2021-03–present): Designed gRPC and REST payment APIs in Python/Go handling 2M+ TPS. Led migration from monolith to microservices across 6 services.\n- Backend Engineer at N26 (2018-07–2021-02): Built Python FastAPI services for banking platform. Owned PostgreSQL schema design and query optimisation for 5M user accounts.\n- Junior Python Developer at Freelance (2016-01–2018-06): Built Django REST backends for e-commerce clients. GitHub: 620 commits, 14 OSS repos. Years of experience: 9.2. Seniority (LinkedIn): senior. Career trajectory: ascending. Location: Berlin, Germany.",
+    "expected": {
+      "dealbreaker": false,
+      "verdicts": {
+        "5+ years backend development experience": "YES",
+        "Proficiency in Python or Go": "YES",
+        "Experience designing REST or gRPC APIs": "YES",
+        "Worked with distributed systems or microservices": "YES",
+        "Experience with PostgreSQL or another relational database": "YES"
+      }
+    }
+  },
+  {
+    "id": "frontend_vs_backend_role",
+    "description": "React/Vue frontend dev applying for backend role — should hit dealbreaker",
+    "dealbreakers": "no Python or Go experience; no backend API development",
+    "criteria": [
+      "5+ years backend development experience",
+      "Proficiency in Python or Go",
+      "Experience designing REST or gRPC APIs",
+      "Worked with distributed systems or microservices",
+      "Experience with PostgreSQL or another relational database"
+    ],
+    "candidate_summary": "Anna Müller. Frontend engineer. LinkedIn: Senior Frontend Engineer @ Zalando. Career history:\n- Senior Frontend Engineer at Zalando (2020-04–present): Built React component library used by 30 squads. Led migration from Redux to Zustand. Performance optimisation reduced bundle size by 35%.\n- Frontend Developer at Delivery Hero (2017-09–2020-03): Vue.js SPA development. Worked with REST APIs built by backend team but did not author any backend code.\n- UI Developer at Agency (2015-01–2017-08): HTML/CSS/JavaScript, jQuery. Languages: JavaScript, TypeScript, CSS. GitHub: 310 commits, 5 OSS repos. Years of experience: 10.1. Seniority (LinkedIn): senior. Career trajectory: ascending. Location: Berlin, Germany.",
+    "expected": {
+      "dealbreaker": true,
+      "verdicts": {
+        "5+ years backend development experience": "NO",
+        "Proficiency in Python or Go": "NO"
+      }
+    }
+  },
+  {
+    "id": "ml_strong_match",
+    "description": "ML engineer with production experience applying for ML role — all criteria should pass",
+    "dealbreakers": "no Python; no experience training ML models; no production ML deployment",
+    "criteria": [
+      "3+ years applied machine learning experience",
+      "Proficiency in Python and PyTorch or TensorFlow",
+      "Experience training and evaluating large models",
+      "Production ML deployment experience (serving, monitoring)",
+      "Familiarity with data pipelines and feature engineering"
+    ],
+    "candidate_summary": "Lena Fischer. ML engineer specialising in NLP and recommendation systems. LinkedIn: Staff ML Engineer @ Spotify. Career history:\n- Staff ML Engineer at Spotify (2022-01–present): Led training of transformer-based playlist recommendation model (500M params, PyTorch). Deployed to production serving 400M users via TorchServe. Reduced P99 latency by 30%.\n- Senior ML Engineer at Klarna (2019-06–2021-12): Built fraud detection models (XGBoost, LightGBM). Owned feature store pipeline (Feast + Spark). Model served 1M daily transactions.\n- ML Engineer at Research Lab (2017-03–2019-05): TensorFlow model training for image classification. Wrote data preprocessing pipelines. Languages: Python, Scala. GitHub: 480 commits, 9 OSS repos. Years of experience: 8.5. Seniority (LinkedIn): staff. Career trajectory: ascending. Location: Stockholm, Sweden.",
+    "expected": {
+      "dealbreaker": false,
+      "verdicts": {
+        "3+ years applied machine learning experience": "YES",
+        "Proficiency in Python and PyTorch or TensorFlow": "YES",
+        "Experience training and evaluating large models": "YES",
+        "Production ML deployment experience (serving, monitoring)": "YES",
+        "Familiarity with data pipelines and feature engineering": "YES"
+      }
+    }
+  },
+  {
+    "id": "data_analyst_vs_ml_role",
+    "description": "Data analyst (SQL/Tableau, no model training) applying for ML Engineer role — should not match",
+    "dealbreakers": "no Python; no experience training ML models; no production ML deployment",
+    "criteria": [
+      "3+ years applied machine learning experience",
+      "Proficiency in Python and PyTorch or TensorFlow",
+      "Experience training and evaluating large models",
+      "Production ML deployment experience (serving, monitoring)",
+      "Familiarity with data pipelines and feature engineering"
+    ],
+    "candidate_summary": "Marco Rossi. Data analyst focused on business intelligence and reporting. LinkedIn: Senior Data Analyst @ MediaCom. Career history:\n- Senior Data Analyst at MediaCom (2020-03–present): Built Tableau dashboards for marketing KPIs. SQL query optimisation across BigQuery. Coordinated with data engineering team for ETL pipeline scheduling.\n- Data Analyst at Publicis (2017-10–2020-02): Excel/PowerBI reporting, Google Analytics. No programming or ML work. Languages: SQL. GitHub: 22 commits, 0 OSS repos. Years of experience: 8.0. Seniority (LinkedIn): mid. Career trajectory: lateral. Location: Milan, Italy.",
+    "expected": {
+      "dealbreaker": true,
+      "verdicts": {
+        "3+ years applied machine learning experience": "NO",
+        "Proficiency in Python and PyTorch or TensorFlow": "NO",
+        "Production ML deployment experience (serving, monitoring)": "NO"
+      }
+    }
+  },
+  {
+    "id": "junior_backend_vs_senior_role",
+    "description": "2-year backend dev applying for senior role — should be partial on experience, not disqualified on stack",
+    "dealbreakers": "no Python or Go experience",
+    "criteria": [
+      "5+ years backend development experience",
+      "Proficiency in Python or Go",
+      "Experience designing REST APIs",
+      "Worked with relational databases",
+      "Team leadership or mentoring experience"
+    ],
+    "candidate_summary": "Carlos López. Junior backend developer. LinkedIn: Backend Developer @ Fintech Startup. Career history:\n- Backend Developer at FinStart (2023-02–present): Built Python FastAPI endpoints for payments module. PostgreSQL schema work under senior guidance. No team leadership responsibilities.\n- Intern at consultancy (2022-06–2023-01): Python scripting, minor REST API work. Languages: Python, SQL. GitHub: 180 commits, 2 OSS repos. Years of experience: 2.3. Seniority (LinkedIn): junior. Career trajectory: ascending. Location: Madrid, Spain.",
+    "expected": {
+      "dealbreaker": false,
+      "verdicts": {
+        "5+ years backend development experience": "NO",
+        "Proficiency in Python or Go": "YES",
+        "Experience designing REST APIs": "PARTIAL",
+        "Worked with relational databases": "YES",
+        "Team leadership or mentoring experience": "NO"
+      }
+    }
+  },
+  {
+    "id": "internal_candidate_strong_career",
+    "description": "Internal Mirai candidate with no GitHub data but strong ascending career trajectory — score_potential should be non-zero despite no GitHub signals",
+    "dealbreakers": "no Python experience; no backend API development",
+    "criteria": [
+      "3+ years backend development experience",
+      "Proficiency in Python",
+      "Experience with REST APIs",
+      "Evidence of technical growth or increasing responsibility"
+    ],
+    "candidate_summary": "Sofia Bianchi. Role: software-engineer. Seniority: mid. Skills: Python, FastAPI, Django, PostgreSQL, Redis, Docker. Experience: Software Engineer at Banca Mediolanum (2022-04–present); Junior Developer at Reply (2020-01–2022-03); Intern at startup (2019-06–2019-12). Career trajectory: ascending. Location: Milan, Italy.",
+    "expected": {
+      "dealbreaker": false,
+      "verdicts": {
+        "3+ years backend development experience": "YES",
+        "Proficiency in Python": "YES",
+        "Experience with REST APIs": "YES",
+        "Evidence of technical growth or increasing responsibility": "YES"
+      }
+    }
+  },
+  {
+    "id": "devops_vs_backend_role",
+    "description": "DevOps/platform engineer applying for backend role — infra skills present but no product backend development",
+    "dealbreakers": "no Python or Go experience; no backend API development",
+    "criteria": [
+      "5+ years backend development experience",
+      "Proficiency in Python or Go",
+      "Experience designing REST or gRPC APIs",
+      "Worked with distributed systems or microservices",
+      "Experience with PostgreSQL or another relational database"
+    ],
+    "candidate_summary": "Priya Sharma. Platform and infrastructure engineer. LinkedIn: Senior DevOps Engineer @ Booking.com. Career history:\n- Senior DevOps Engineer at Booking.com (2020-01–present): Kubernetes cluster management (500 nodes), Terraform IaC, Helm chart authoring. Python scripting for automation and runbooks. No product service development.\n- DevOps Engineer at ING (2017-05–2019-12): CI/CD pipelines (Jenkins, GitLab), monitoring (Prometheus/Grafana). Shell and Python automation scripts.\n- Systems Administrator at hosting firm (2015-01–2017-04): Linux server management. Languages: Python (scripting only), Bash, HCL. GitHub: 290 commits, 4 OSS repos. Years of experience: 10.0. Seniority (LinkedIn): senior. Career trajectory: lateral. Location: Amsterdam, Netherlands.",
+    "expected": {
+      "dealbreaker": true,
+      "verdicts": {
+        "5+ years backend development experience": "NO",
+        "Experience designing REST or gRPC APIs": "NO"
+      }
+    }
+  }
+]

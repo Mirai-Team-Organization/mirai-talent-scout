@@ -76,13 +76,13 @@ def test_breakdown_sums_to_overall():
     b = result.breakdown
 
     expected = (
-        b.tech_stack.score * 0.30 +
-        b.open_source.score * 0.25 +
-        b.consistency.score * 0.20 +
-        b.collaboration.score * 0.15 +
-        b.presentation.score * 0.10
+        b.tech_stack.score * 0.33 +
+        b.open_source.score * 0.28 +
+        b.consistency.score * 0.22 +
+        b.collaboration.score * 0.17
+        # presentation excluded from overall (indexing-only signal)
     )
-    assert abs(result.overall - round(expected, 1)) < 0.5
+    assert abs(result.overall - round(expected, 1)) < 0.2
 
 
 def test_startup_early_boosts_consistency():
@@ -129,3 +129,5 @@ def test_location_fit_no_location():
         candidate_location=None,
     )
     assert result.location_fit == 40.0  # unknown location
+
+

@@ -47,10 +47,18 @@ def _run_in_thread(coro):
 
 def _extract_linkedin_url(profile: dict) -> Optional[str]:
     """
-    Extract a LinkedIn profile URL from a GitHub profile dict.
-    Checks websiteUrl and bio for linkedin.com/in/ patterns.
+    Extract a LinkedIn profile URL from a profile dict.
+    Checks (in order):
+      1. Top-level linkedin_url (set by search_talent_index)
+      2. websiteUrl in profile sub-dict
+      3. bio text (regex scan)
     """
     pattern = re.compile(r"https?://(www\.)?linkedin\.com/in/[^\s\"'>]+", re.IGNORECASE)
+
+    # 1. talent_index stores it directly at the top level
+    top_level = profile.get("linkedin_url") or ""
+    if top_level and pattern.search(top_level):
+        return pattern.search(top_level).group(0).rstrip("/")
 
     website = profile.get("profile", {}).get("websiteUrl") or ""
     if pattern.search(website):

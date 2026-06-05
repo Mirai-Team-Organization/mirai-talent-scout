@@ -61,96 +61,133 @@ def _haiku(system: str, user: str, max_tokens: int = 300) -> str:
     return resp["output"]["message"]["content"][0]["text"].strip()
 
 
-# ── Rubric flattening ─────────────────────────────────────────────────────────
+# ── Combined rubric → brief translation (single Haiku call) ──────────────────
 
-_RUBRIC_SYSTEM = """You are a recruiting assistant. Given a job posting rubric, output exactly two lines:
-SEARCH: <1-sentence description of the ideal candidate for a GitHub user search. Focus on technical skills, years of experience, domain. Be specific and concise.>
-DEALBREAKERS: <comma-separated list of dealbreakers from the rubric, or "none" if empty>
+_BRIEF_SYSTEM = """You are a recruiting assistant. Given a job posting, output a single JSON object with exactly these keys:
 
-Output ONLY those two lines. No preamble, no explanation."""
+  rubric_text: string       — one sentence describing the ideal candidate (skills, domain, experience level)
+  dealbreaker_text: string  — comma-separated dealbreakers, or "" if none
+  languages: array          — programming languages REQUIRED for this role (not nice-to-haves)
+                              Valid values: Python, TypeScript, JavaScript, Go, Rust, Java, Kotlin, Swift, Ruby, C++, Scala, PHP
+  role_signals: array       — role type tags. Read the full job description to determine the actual role type.
+                              For generic titles like "Software Engineer", "Engineer", or "Developer", return up to 2 signals
+                              if the JD content reveals a specific type (e.g. ["backend_signal", "fullstack_signal"]).
+                              For clearly specialised titles, return exactly 1 signal.
+                              Valid values ONLY: ml_engineer_signal, devops_signal, fullstack_signal, backend_signal, fde_signal
+                              If the JD describes backend/API/server-side work, always include backend_signal.
+  signals: array            — achievement signals. Leave empty unless the role explicitly requires OSS work.
+                              Valid values ONLY: oss_contributor, starred_project_author
+
+Note: the developer index is pre-filtered to GitHub grade B- or above. Do NOT filter on activity or seniority
+— those are determined from LinkedIn enrichment. Your job is only to identify the technical type.
+
+Return ONLY the JSON object. No markdown fences, no explanation."""
+
+_VALID_ROLE_SIGNALS = {"ml_engineer_signal", "devops_signal", "fullstack_signal", "backend_signal", "fde_signal"}
+_VALID_SIGNALS = {"oss_contributor", "starred_project_author"}
 
 
-def _flatten_rubric(rubric: dict, title: str, skills: list[str]) -> tuple[str, str]:
+def _build_brief_from_rubric(
+    rubric: dict,
+    title: str,
+    skills: list[str],
+    location: str,
+    seniority: str,
+    job_description: str = "",
+) -> dict:
     """
-    Returns (rubric_text, dealbreaker_text).
-    Falls back to a simple skills-based description if rubric is empty.
+    Single Haiku call that returns rubric_text, dealbreaker_text, and index_query fields.
+    Falls back to keyword heuristics on any error.
     """
-    if not rubric or not any(rubric.get(k) for k in ("mustHaves", "dealBreakers", "roleMission")):
-        skills_str = ", ".join(skills[:5]) if skills else title
-        return f"{title} engineer with strong {skills_str} skills", ""
+    skills_str = ", ".join(skills[:8])
+    must_haves = "; ".join((rubric.get("mustHaves") or [])[:6])
+    deal_breakers = ", ".join((rubric.get("dealBreakers") or [])[:5])
+    role_mission = rubric.get("roleMission") or ""
 
-    must_haves = "; ".join(rubric.get("mustHaves", [])[:5])
-    deal_breakers = rubric.get("dealBreakers", [])
-    role_mission = rubric.get("roleMission", "")
+    # Include a JD excerpt so Haiku can infer role type from content, not just title.
+    jd_excerpt = job_description[:1200].strip() if job_description else ""
 
-    user_msg = f"""mustHaves: {must_haves}
-dealBreakers: {"; ".join(deal_breakers)}
-roleMission: {role_mission}"""
+    user_msg = (
+        f"Title: {title}\n"
+        f"Seniority: {seniority}\n"
+        f"Location: {location}\n"
+        f"Skills: {skills_str}\n"
+        f"Must-haves: {must_haves}\n"
+        f"Dealbreakers: {deal_breakers}\n"
+        f"Role mission: {role_mission}"
+    )
+    if jd_excerpt:
+        user_msg += f"\n\nJob description:\n{jd_excerpt}"
 
     try:
-        raw = _haiku(_RUBRIC_SYSTEM, user_msg, max_tokens=200)
+        raw = _haiku(_BRIEF_SYSTEM, user_msg, max_tokens=400)
+        cleaned = re.sub(r"```[a-z]*\n?", "", raw).strip()
+        data = json.loads(cleaned)
+        if not isinstance(data, dict):
+            raise ValueError("not a dict")
+
+        rubric_text = str(data.get("rubric_text") or f"{seniority} {title} with {skills_str}").strip()
+        dealbreaker_text = str(data.get("dealbreaker_text") or "").strip()
+        languages = [str(l) for l in (data.get("languages") or [])]
+        role_signals = [s for s in (data.get("role_signals") or []) if s in _VALID_ROLE_SIGNALS]
+        signals = [s for s in (data.get("signals") or []) if s in _VALID_SIGNALS]
+
+        return {
+            "rubric_text":      rubric_text,
+            "dealbreaker_text": dealbreaker_text,
+            "index_query": {
+                **({"languages":    languages}    if languages    else {}),
+                **({"role_signals": role_signals} if role_signals else {}),
+                **({"signals":      signals}      if signals      else {}),
+            },
+        }
+
     except Exception as e:
-        print(f"[build_talent_brief] Haiku rubric flatten failed: {e}")
-        skills_str = ", ".join(skills[:5]) if skills else title
-        return f"{title} with {skills_str}", ""
-
-    search_text = ""
-    dealbreaker_text = ""
-    for line in raw.splitlines():
-        if line.upper().startswith("SEARCH:"):
-            search_text = line[7:].strip()
-        elif line.upper().startswith("DEALBREAKERS:"):
-            raw_db = line[13:].strip()
-            dealbreaker_text = "" if raw_db.lower() == "none" else raw_db
-
-    if not search_text:
-        skills_str = ", ".join(skills[:5]) if skills else title
-        search_text = f"{title} with {skills_str}"
-
-    return search_text, dealbreaker_text
+        print(f"[build_talent_brief] rubric translation failed: {e} — using fallback")
+        skills_str_short = ", ".join(skills[:5]) if skills else title
+        return {
+            "rubric_text":      f"{seniority} {title} with {skills_str_short}",
+            "dealbreaker_text": "",
+            "index_query":      {},
+        }
 
 
-# ── GitHub query translation ──────────────────────────────────────────────────
+# ── Role type inference ───────────────────────────────────────────────────────
 
-_QUERY_SYSTEM = """You are a GitHub user search query builder. Convert a candidate description into GitHub search syntax.
+_ROLE_TYPE_MAP: list[tuple[list[str], str]] = [
+    (["machine learning", "ml ", "data science", "ai engineer", "mlops", "llm"], "ml_engineer_signal"),
+    (["devops", "platform", "sre ", "infrastructure", "cloud engineer", "devsecops"], "devops_signal"),
+    (["fullstack", "full-stack", "full stack", "frontend", "react", "vue", "angular", "next.js"], "fullstack_signal"),
+    (["backend", "back-end", "back end", "api engineer", "golang", "rust engineer", "java engineer"], "backend_signal"),
+    (["solutions engineer", "forward deploy", "fde", "implementation engineer", "sales engineer"], "fde_signal"),
+]
 
-Valid qualifiers only:
-- location:City  (city or country)
-- language:Name  (Python, JavaScript, TypeScript, Go, Rust, Java, Ruby, C++, etc.)
-- followers:>N   (10=junior, 50=mid, 100=senior, 500=influential)
-- repos:>N       (5=active contributor)
-
-Rules:
-- Extract only what maps to a GitHub qualifier.
-- Return ONLY the GitHub search string, nothing else.
-
-Examples:
-"Senior Python AI engineer in Milan"         → location:Milan language:Python followers:>100
-"Mid-level TypeScript React engineer remote" → language:TypeScript followers:>50
-"Junior data scientist"                      → language:Python followers:>10"""
-
-_GITHUB_QUALIFIER_PREFIXES = (
-    "language:", "location:", "followers:", "repos:", "in:", "type:", "is:",
-)
+_ROLE_LANGUAGE_MAP: dict[str, list[str]] = {
+    "ml_engineer_signal":  ["Python"],
+    "devops_signal":       ["Python", "Go"],
+    "fullstack_signal":    ["TypeScript", "JavaScript"],
+    "backend_signal":      ["Go", "Rust", "Java", "Python", "Kotlin"],
+    "fde_signal":          ["Python", "TypeScript", "JavaScript"],
+}
 
 
-def _translate_to_github_query(rubric_text: str, location: str, seniority: str) -> str:
-    """Translate rubric_text + location + seniority into GitHub search syntax."""
-    nl = f"{seniority} {rubric_text} in {location}" if location else f"{seniority} {rubric_text}"
-    try:
-        raw = _haiku(_QUERY_SYSTEM, nl, max_tokens=100)
-    except Exception as e:
-        print(f"[build_talent_brief] GitHub query translation failed: {e}")
-        return rubric_text
+def _infer_role_type(title: str, skills: list[str]) -> tuple[str | None, list[str]]:
+    """
+    Infer role_type signal name and primary language list from job title + skills.
+    Returns (role_type, language_list).
+    """
+    text = f"{title} {' '.join(skills)}".lower()
+    for keywords, signal in _ROLE_TYPE_MAP:
+        if any(kw in text for kw in keywords):
+            return signal, _ROLE_LANGUAGE_MAP.get(signal, [])
 
-    # Validate: strip unrecognised qualifiers
-    tokens = raw.strip().split()
-    valid = [
-        t for t in tokens
-        if ":" not in t
-        or any(t.lower().startswith(p) for p in _GITHUB_QUALIFIER_PREFIXES)
-    ]
-    return " ".join(valid) or rubric_text
+    # Fallback: derive languages from skills list directly
+    _KNOWN_LANGUAGES = {
+        "python", "typescript", "javascript", "go", "golang", "rust",
+        "java", "kotlin", "swift", "c++", "scala",
+    }
+    lang_list = [s for s in skills if s.lower() in _KNOWN_LANGUAGES]
+    return None, lang_list[:3]
 
 
 # ── Seniority normalisation ───────────────────────────────────────────────────
@@ -207,6 +244,7 @@ def build_talent_brief(job_posting_id: str) -> dict:
     salary_range_str: str | None = posting.get("salary_range")
     skills: list[str] = posting.get("skills") or []
     hiring_rubric: dict = posting.get("hiring_rubric") or {}
+    job_description: str = (posting.get("description") or "")[:3000]
 
     seniority = _normalise_seniority(seniority_raw)
     remote_eligible = (
@@ -244,21 +282,31 @@ def build_talent_brief(job_posting_id: str) -> dict:
     else:
         role_weights = _GENERIC_WEIGHTS.copy()
 
-    # ── 3. Flatten rubric via Haiku ───────────────────────────────────────────
-    rubric_text, dealbreaker_text = _flatten_rubric(hiring_rubric, title, skills)
+    # ── 3. Single Haiku call: rubric_text + dealbreakers + index_query ───────────
+    brief_data = _build_brief_from_rubric(hiring_rubric, title, skills, location, seniority, job_description)
+    rubric_text: str = brief_data["rubric_text"]
+    dealbreaker_text: str = brief_data["dealbreaker_text"]
+    index_query: dict = brief_data["index_query"]
 
-    # ── 4. Translate to GitHub search syntax ──────────────────────────────────
-    github_query = _translate_to_github_query(rubric_text, location, seniority)
-
-    # ── 5. Normalise salary ───────────────────────────────────────────────────
+    # ── 4. Normalise salary ───────────────────────────────────────────────────
     salary_min, salary_max, salary_currency = parse_salary(salary_range_str)
     salary_market = derive_market(location) if not remote_eligible else "REMOTE"
 
-    # ── 6. Build source reasoning ─────────────────────────────────────────────
+    # ── 5. Derive role_type + language_list (index_query authoritative, keyword fallback) ──
+    role_signals_from_query = index_query.get("role_signals") or []
+    role_type = role_signals_from_query[0] if role_signals_from_query else None
+    language_list = index_query.get("languages") or []
+
+    if not role_type or not language_list:
+        role_type_fallback, language_list_fallback = _infer_role_type(title, skills)
+        role_type = role_type or role_type_fallback
+        language_list = language_list or language_list_fallback
+
+    # ── 7. Build source reasoning ─────────────────────────────────────────────
     top_skills = ", ".join(skills[:3]) if skills else title
     source_reasoning = (
         f"Checking Mirai's internal talent pool first (zero API cost), "
-        f"then searching GitHub for {seniority} {title} candidates "
+        f"then querying the pre-built talent index for {seniority} {title} candidates "
         f"with focus on {top_skills}."
     )
 
@@ -277,9 +325,12 @@ def build_talent_brief(job_posting_id: str) -> dict:
         salary_max=salary_max,
         salary_currency=salary_currency,
         salary_market=salary_market,
-        github_query=github_query,
-        sources=["internal_pool", "github_broad"],
+        language_list=language_list,
+        role_type=role_type,
+        index_query=index_query,
+        sources=["internal_pool", "talent_index"],
         source_reasoning=source_reasoning,
+        job_description=job_description,
     )
 
     return brief.model_dump()

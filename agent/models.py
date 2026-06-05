@@ -81,8 +81,12 @@ class TalentBrief(BaseModel):
     salary_currency: Optional[str] = None
     salary_market: Optional[str] = None  # EU | US | REMOTE
     github_query: str = ""               # pre-translated GitHub search syntax
-    sources: list[str] = Field(default_factory=lambda: ["internal_pool", "github_broad"])
+    language_list: list[str] = Field(default_factory=list)  # primary languages for index search
+    role_type: Optional[str] = None     # ml_engineer_signal | devops_signal | fullstack_signal | backend_signal | fde_signal
+    index_query: dict = Field(default_factory=dict)  # structured talent_index query params
+    sources: list[str] = Field(default_factory=lambda: ["internal_pool", "talent_index"])
     source_reasoning: str = ""
+    job_description: str = ""  # raw job posting description, used by scoring LLM
 
 
 # ── Mobility / "keen to move" scoring ───────────────────────────────────────
@@ -131,6 +135,7 @@ class LinkedInPosition(BaseModel):
     start_date: Optional[str] = None   # ISO date string "YYYY-MM"
     end_date: Optional[str] = None     # None = current role
     is_current: bool = False
+    description: Optional[str] = None  # role description / responsibilities (truncated to 300 chars)
 
 
 class LinkedInEducation(BaseModel):

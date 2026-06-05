@@ -34,6 +34,7 @@ import re
 import threading
 from typing import Any, AsyncGenerator
 
+import botocore.config
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -47,9 +48,9 @@ from strands.tools.decorator import DecoratedFunctionTool
 from agent.tools.enrich_linkedin import enrich_linkedin
 from agent.tools.rank_shortlist import rank_shortlist
 from agent.tools.score_candidate import score_candidate
-from agent.tools.search_github import search_github
 from agent.tools.build_talent_brief import build_talent_brief
 from agent.tools.search_internal_pool import search_internal_pool
+from agent.tools.search_talent_index import search_talent_index
 from agent.tools.score_candidate_rubric import score_candidate_rubric
 from db.client import get_supabase
 
@@ -77,8 +78,8 @@ _AUTH_SECRET: str = os.environ.get("MCP_AUTH_SECRET", "")
 _TOOL_LABELS: dict[str, str] = {
     "build_talent_brief":    "Reading job posting and building search brief...",
     "search_internal_pool":  "Checking Mirai's internal talent pool...",
+    "search_talent_index":   "Searching the talent index...",
     "score_candidate_rubric": "Scoring candidates against the hiring rubric...",
-    "search_github":         "Searching GitHub for matching developers...",
     "enrich_linkedin":       "Enriching LinkedIn profiles...",
     "score_candidate":       "Scoring and grading candidates...",
     "rank_shortlist":        "Ranking the shortlist...",
@@ -86,61 +87,39 @@ _TOOL_LABELS: dict[str, str] = {
 
 # ── System prompts ────────────────────────────────────────────────────────────
 
-# Mode B: used when there is no job_posting_id
-CONVERSATIONAL_SYSTEM_PROMPT = """You are an AI talent scout for Mirai, a recruiting platform.
+# JOB_POSTING_SYSTEM_PROMPT is kept for reference but no longer used for the initial
+# search — the pipeline runs directly. Only used if Strands fallback is ever needed.
+JOB_POSTING_SYSTEM_PROMPT = """You are Mirai's AI Talent Scout. Execute the workflow below silently — call tools in order, then output the final JSON. Do NOT narrate steps, do NOT explain what you are about to do. Tools only, then JSON output.
 
-Your job: help recruiters find software developers who fit a role AND are likely open to new opportunities.
-
-WORKFLOW:
-1. If the recruiter's query is ambiguous (missing location OR missing role/tech), ask ONE short clarifying question. Do not run any tools yet.
-2. If the query is clear enough (has a location and a rough role or tech stack), run all four tools in sequence:
-   - search_github(query, limit=15)
-   - enrich_linkedin(candidates) on all results
-   - score_candidate(profile) for each candidate
-   - rank_shortlist(candidates, limit=10)
-3. Return the ranked candidates as a JSON array — nothing else, just the array.
-
-After showing candidates, the recruiter may ask follow-up questions ("only Python", "remove junior", "try Berlin instead"). Re-run the tools with the refined criteria and return an updated JSON array.
-
-RULES:
-- Never invent data. If LinkedIn enrichment is missing, say "mobility data unavailable".
-- Keep clarifying questions to one sentence.
-- When returning candidates, output ONLY the JSON array. No prose before or after the array.
-- When asking a clarifying question, output ONLY the question text. No JSON."""
-
-# Mode A: used when job_posting_id is provided in the request
-JOB_POSTING_SYSTEM_PROMPT = """You are Mirai's AI Talent Scout. A specific job posting has been provided — use it to drive the entire search.
-
-WORKFLOW (always follow this order):
+WORKFLOW (always follow this exact order, no commentary between steps):
 
 1. build_talent_brief(job_posting_id)
-   Loads the hiring rubric, skills, salary range, and location.
-   Produces a TalentBrief you must pass to all subsequent tools.
-
 2. search_internal_pool(talent_brief, limit=20)
-   Checks Mirai's internal database first — zero cost, highest data quality.
-   Do NOT call enrich_linkedin on internal candidates.
+3. search_talent_index(talent_brief)
+   — returns ONLY complete profiles (GitHub + LinkedIn already attached, no enrichment needed)
+4. score_candidate_rubric(all_candidates, talent_brief)  ← one call, internal + index combined
+5. rank_shortlist(scored_candidates, talent_brief=talent_brief)  ← always pass talent_brief for comparative ranking
 
-3. search_github(query=talent_brief["github_query"], limit=20)
-   Use the pre-translated GitHub query from the TalentBrief exactly as-is.
+OUTPUT: Output the JSON array returned by rank_shortlist. Nothing else — no prose, no preamble, no explanation. Start your response with [ and end with ].
 
-4. score_candidate_rubric(profile, talent_brief) — for every candidate (internal + GitHub)
-   Candidates with dealbreaker_hit=True are excluded from the shortlist.
+RULES:
+- Do NOT call enrich_linkedin — LinkedIn data is already attached by search_talent_index.
+- search_talent_index only returns profiles with both GitHub data AND LinkedIn enrichment.
+- Exclude candidates with fit_score < 35 or dealbreaker_hit = true.
+- Return top 10 candidates only (rank_shortlist default).
+- Rank by fit_score descending.
+- Internal pool is free — always run it.
+- Never call score_candidate_rubric once per candidate — one call with the full combined list."""
 
-5. enrich_linkedin(usernames) — ONLY for GitHub candidates with fit_score >= 40
-   Never call for internal candidates.
+FOLLOWUP_SYSTEM_PROMPT = """You are Mirai's AI Talent Scout. The candidate shortlist from the previous search is already in the conversation history as a JSON array.
 
-6. rank_shortlist(candidates) — sorts by fit_score → mobility → grade.
+Answer the recruiter's follow-up question. You may:
+- Filter, explain, or compare candidates from the existing shortlist
+- Answer questions about specific candidates or their scores
+- Call rank_shortlist if the recruiter asks for a different ordering or tighter filter
 
-OUTPUT: Return a JSON array of ranked candidates. Nothing else — no prose, no explanation.
-
-Each candidate must be included in the array with all fields returned by the tools.
-Internal candidates have source="internal_mirai". GitHub candidates have source="github" or no source field.
-
-COST RULES:
-- Internal pool first — it's free.
-- Only enrich LinkedIn for fit_score >= 40.
-- Dealbreakers auto-exclude — don't spend rubric scoring on disqualified candidates."""
+Do NOT re-run the search pipeline. Work only with the candidates already in the conversation.
+When returning a candidate list, output a JSON array starting with [ and ending with ]."""
 
 
 # ── SSE helpers ───────────────────────────────────────────────────────────────
@@ -170,15 +149,34 @@ def _try_extract_candidates(text: str) -> list | None:
 # ── Strands integration ───────────────────────────────────────────────────────
 
 class _ToolWithSSE(DecoratedFunctionTool):
-    """Wraps a @tool-decorated function to emit a tool_start SSE event before execution."""
+    """Wraps a @tool-decorated function to emit tool_start / tool_done SSE events."""
 
     def __init__(self, original: DecoratedFunctionTool, put_event: Any) -> None:
-        super().__init__(
-            original._tool_name,
-            original._tool_spec,
-            original._tool_func,
-            original._metadata,
-        )
+        orig_func = original._tool_func
+        put       = put_event
+        tname     = original._tool_name
+
+        def _counted(**kw: Any) -> Any:
+            # Inject per-candidate progress callback for the scoring tool
+            if tname == "score_candidate_rubric":
+                import agent.tools.score_candidate_rubric as _scr
+                def _progress_fn(done: int, total: int) -> None:
+                    put(sse_event("tool_progress", tool=tname, done=done, total=total))
+                _scr._progress.fn = _progress_fn
+            try:
+                result = orig_func(**kw)
+            finally:
+                if tname == "score_candidate_rubric":
+                    import agent.tools.score_candidate_rubric as _scr
+                    _scr._progress.fn = None
+            count = len(result) if isinstance(result, list) else None
+            extra: dict[str, Any] = {}
+            if tname == "rank_shortlist":
+                extra["input_count"] = len(kw.get("candidates") or [])
+            put(sse_event("tool_done", tool=tname, count=count, **extra))
+            return result
+
+        super().__init__(original._tool_name, original._tool_spec, _counted, original._metadata)
         self._put_event = put_event
 
     async def stream(self, tool_use: Any, invocation_state: dict, **kwargs: Any):  # type: ignore[override]
@@ -186,6 +184,61 @@ class _ToolWithSSE(DecoratedFunctionTool):
         self._put_event(sse_event("tool_start", tool=self._tool_name, text=label))
         async for event in super().stream(tool_use, invocation_state, **kwargs):
             yield event
+
+
+def _run_direct_pipeline(
+    job_posting_id: str,
+    put: Any,
+    cost_info: dict,
+) -> None:
+    """Run the 5-step search pipeline directly without LLM orchestration between steps."""
+    import agent.tools.score_candidate_rubric as _scr
+
+    put(sse_event("tool_start", tool="build_talent_brief", text=_TOOL_LABELS["build_talent_brief"]))
+    talent_brief = build_talent_brief._tool_func(job_posting_id=job_posting_id)
+    put(sse_event("tool_done", tool="build_talent_brief", count=None))
+
+    put(sse_event("tool_start", tool="search_internal_pool", text=_TOOL_LABELS["search_internal_pool"]))
+    internal = search_internal_pool._tool_func(talent_brief=talent_brief, limit=20)
+    put(sse_event("tool_done", tool="search_internal_pool", count=len(internal)))
+
+    put(sse_event("tool_start", tool="search_talent_index", text=_TOOL_LABELS["search_talent_index"]))
+    index_candidates = search_talent_index._tool_func(talent_brief=talent_brief)
+    put(sse_event("tool_done", tool="search_talent_index", count=len(index_candidates)))
+
+    # Deduplicate: prefer internal candidates; match on github_username then linkedin_url
+    seen_keys: set[str] = set()
+    deduped: list[dict] = []
+    for c in internal + index_candidates:
+        p = c.get("profile") or {}
+        key = p.get("login") or c.get("github_username") or c.get("linkedin_url") or id(c)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped.append(c)
+    all_candidates = deduped
+
+    def _progress_fn(done: int, total: int) -> None:
+        put(sse_event("tool_progress", tool="score_candidate_rubric", done=done, total=total))
+
+    _scr._progress.fn = _progress_fn
+    put(sse_event("tool_start", tool="score_candidate_rubric", text=_TOOL_LABELS["score_candidate_rubric"]))
+    try:
+        scored = score_candidate_rubric._tool_func(candidates=all_candidates, talent_brief=talent_brief)
+    finally:
+        _scr._progress.fn = None
+    put(sse_event("tool_done", tool="score_candidate_rubric", count=len(scored)))
+
+    put(sse_event("tool_start", tool="rank_shortlist", text=_TOOL_LABELS["rank_shortlist"]))
+    ranked = rank_shortlist._tool_func(candidates=scored, talent_brief=talent_brief)
+    put(sse_event("tool_done", tool="rank_shortlist", count=len(ranked), input_count=len(scored)))
+
+    put(sse_event("candidates", data=ranked))
+
+    num_scored = len(scored)  # all candidates that reached scoring
+    cost_info.update({
+        "num_candidates":     len(ranked),
+        "estimated_cost_usd": round(0.020 + num_scored * 0.00008, 4),
+    })
 
 
 class _SSECallback:
@@ -260,6 +313,55 @@ async def list_job_postings(request: Request):
     return JSONResponse(content=payload)
 
 
+@app.get("/talent-index-browse")
+async def browse_talent_index(
+    request: Request,
+    country: str | None = None,
+    city: str | None = None,
+    role_signal: str | None = None,
+    language: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """Return talent_index rows with optional tag filters for the Index browser UI."""
+    if _AUTH_SECRET:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header != f"Bearer {_AUTH_SECRET}":
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    sb = get_supabase()
+    # Exclude heavy github_data blob — all useful fields are denormalised columns
+    q = (
+        sb.table("talent_index")
+        .select(
+            "github_username,location_raw,country_code,city,"
+            "languages,role_signals,signals,activity_score,"
+            "followers,own_repo_max_stars,talent_score,"
+            "email,linkedin_url,indexed_at,source",
+            count="exact",
+        )
+        .gt("expires_at", "now()")
+    )
+    if country:
+        q = q.eq("country_code", country)
+    if city:
+        q = q.ilike("city", f"%{city}%")
+    if role_signal:
+        q = q.contains("role_signals", [role_signal])
+    if language:
+        q = q.contains("languages", [language])
+
+    q = q.order("activity_score", desc=True).range(offset, offset + limit - 1)
+    result = q.execute()
+
+    return JSONResponse(content={
+        "profiles": result.data or [],
+        "total":    result.count or 0,
+        "offset":   offset,
+        "limit":    limit,
+    })
+
+
 @app.post("/agent")
 async def agent_endpoint(request: Request, body: ChatRequest):
     """Streaming chat endpoint.
@@ -286,12 +388,9 @@ async def agent_endpoint(request: Request, body: ChatRequest):
 
         def run() -> None:
             try:
-                model = BedrockModel(
-                    model_id=os.environ.get(
-                        "BEDROCK_MODEL", "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
-                    ),
-                    region_name=os.environ.get("AWS_REGION", "eu-west-1"),
-                )
+                if not job_posting_id:
+                    put(sse_event("error", text="A job posting is required. Please select a job posting to begin searching."))
+                    return
 
                 messages = [
                     {"role": msg["role"], "content": [{"text": msg["content"]}]}
@@ -299,72 +398,41 @@ async def agent_endpoint(request: Request, body: ChatRequest):
                     if msg.get("role") in ("user", "assistant") and msg.get("content")
                 ]
 
-                if job_posting_id:
-                    # Mode A: job-posting-aware
-                    tools = [
-                        _ToolWithSSE(t, put)
-                        for t in [
-                            build_talent_brief,
-                            search_internal_pool,
-                            score_candidate_rubric,
-                            search_github,
-                            enrich_linkedin,
-                            rank_shortlist,
-                        ]
-                    ]
-                    system_prompt = JOB_POSTING_SYSTEM_PROMPT
-
-                    # Inject job_posting_id into the message so the agent calls build_talent_brief first.
-                    # Append user's free-text query as an extra filter instruction if provided.
-                    user_query = body.message.strip()
-                    if user_query:
-                        effective_message = (
-                            f"Find candidates for job posting ID: {job_posting_id}\n"
-                            f"Additional filter from recruiter: {user_query}"
-                        )
-                    else:
-                        effective_message = f"Find candidates for job posting ID: {job_posting_id}"
+                # Route: pipeline if no history OR empty message (user clicked Search again)
+                is_followup = bool(messages) and bool(body.message.strip())
+                if not is_followup:
+                    # ── Direct pipeline: first search, no LLM overhead between steps ──
+                    _run_direct_pipeline(job_posting_id, put, cost_info)
                 else:
-                    # Mode B: NL query
-                    tools = [
-                        _ToolWithSSE(t, put)
-                        for t in [search_github, enrich_linkedin, score_candidate, rank_shortlist]
-                    ]
-                    system_prompt = CONVERSATIONAL_SYSTEM_PROMPT
-                    effective_message = body.message
-
-                agent = Agent(
-                    model=model,
-                    tools=tools,
-                    system_prompt=system_prompt,
-                    callback_handler=callback,
-                    messages=messages or None,
-                )
-
-                agent(effective_message)
-
-                candidates = _try_extract_candidates(callback.full_text())
-                if candidates:
-                    put(sse_event("candidates", data=candidates))
-
-                    # ── Estimate search cost ───────────────────────────────
-                    # Bedrock Sonnet (agent session): ~$0.020 flat
-                    # Haiku (rubric scoring, 2 calls/candidate): ~$0.00006/call
-                    # LinkedIn Apify enrichment: $0.004/profile
-                    num_candidates = len(candidates)
-                    num_enriched   = sum(1 for c in candidates if c.get("linkedin"))
-                    num_scored     = sum(1 for c in candidates if "rubric_match_score" in c)
-                    estimated_cost = round(
-                        0.020
-                        + num_scored   * 2 * 0.00006
-                        + num_enriched * 0.004,
-                        4,
+                    # ── Strands agent: follow-up questions over existing shortlist ─────
+                    model = BedrockModel(
+                        model_id=os.environ.get(
+                            "BEDROCK_MODEL", "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                        ),
+                        region_name=os.environ.get("AWS_REGION", "eu-west-1"),
+                        boto_client_config=botocore.config.Config(
+                            read_timeout=600,
+                            connect_timeout=10,
+                            retries={"max_attempts": 2},
+                        ),
                     )
-                    cost_info.update({
-                        "num_candidates":    num_candidates,
-                        "num_enriched":      num_enriched,
-                        "estimated_cost_usd": estimated_cost,
-                    })
+                    agent = Agent(
+                        model=model,
+                        tools=[_ToolWithSSE(rank_shortlist, put)],
+                        system_prompt=FOLLOWUP_SYSTEM_PROMPT,
+                        callback_handler=callback,
+                        messages=messages,
+                    )
+                    agent(body.message.strip())
+
+                    candidates = _try_extract_candidates(callback.full_text())
+                    if candidates:
+                        put(sse_event("candidates", data=candidates))
+                        num_scored = sum(1 for c in candidates if "rubric_match_score" in c)
+                        cost_info.update({
+                            "num_candidates":     len(candidates),
+                            "estimated_cost_usd": round(0.005 + num_scored * 0.00008, 4),
+                        })
 
             except Exception as exc:
                 import traceback as tb

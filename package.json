@@ -1,0 +1,13 @@
+{
+  "name": "mirai-talent-scout",
+  "version": "1.0.0",
+  "type": "module",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.107.0",
+    "orangeslice": "^2.6.0"
+  },
+  "scripts": {
+    "find-linkedin": "node indexer/find_linkedin.mjs"
+  }
+}

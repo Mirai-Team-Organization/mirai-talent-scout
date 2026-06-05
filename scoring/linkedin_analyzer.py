@@ -83,12 +83,17 @@ def parse_harvestapi_response(github_username: str, data: dict) -> tuple[LinkedI
         is_current = str(end.get("text", "")).strip().lower() == "present"
         end_str = None if is_current else _fmt_date(end)
 
+        # Capture role description — truncate to 300 chars to keep context manageable
+        raw_desc = pos.get("description") or pos.get("summary") or pos.get("excerpt") or ""
+        description = raw_desc[:300].strip() or None
+
         positions.append(LinkedInPosition(
             title=pos.get("position", ""),
             company=pos.get("companyName", ""),
             start_date=start_str,
             end_date=end_str,
             is_current=is_current,
+            description=description,
         ))
 
     current = next((p for p in positions if p.is_current), None)
