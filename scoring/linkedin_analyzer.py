@@ -89,7 +89,7 @@ def parse_harvestapi_response(github_username: str, data: dict) -> tuple[LinkedI
 
         positions.append(LinkedInPosition(
             title=pos.get("position", ""),
-            company=pos.get("companyName", ""),
+            company=pos.get("companyName") or "",
             start_date=start_str,
             end_date=end_str,
             is_current=is_current,

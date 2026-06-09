@@ -8,6 +8,7 @@
     "orangeslice": "^2.6.0"
   },
   "scripts": {
-    "find-linkedin": "node indexer/find_linkedin.mjs"
+    "find-linkedin": "node indexer/find_linkedin.mjs",
+    "linkedin-search": "node indexer/linkedin_search.mjs"
   }
 }

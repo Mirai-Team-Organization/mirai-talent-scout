@@ -22,6 +22,7 @@ class OpenSourceScore(BaseModel):
     score: float
     repo_count: int
     commit_count: int
+    max_stars: int
 
 
 class ConsistencyScore(BaseModel):
@@ -84,9 +85,13 @@ class TalentBrief(BaseModel):
     language_list: list[str] = Field(default_factory=list)  # primary languages for index search
     role_type: Optional[str] = None     # ml_engineer_signal | devops_signal | fullstack_signal | backend_signal | fde_signal
     index_query: dict = Field(default_factory=dict)  # structured talent_index query params
+    internal_role_slugs: list[str] = Field(default_factory=list)
+    # LLM-generated kebab-case jobRole slugs for internal pool search
+    # e.g. ["ai-engineer", "ml-engineer", "software-engineer"]
     sources: list[str] = Field(default_factory=lambda: ["internal_pool", "talent_index"])
     source_reasoning: str = ""
     job_description: str = ""  # raw job posting description, used by scoring LLM
+    max_career_years: Optional[float] = None  # filter out candidates with more years of experience; None = no filter
 
 
 # ── Mobility / "keen to move" scoring ───────────────────────────────────────
@@ -131,7 +136,7 @@ class MobilityScore(BaseModel):
 
 class LinkedInPosition(BaseModel):
     title: str
-    company: str
+    company: Optional[str] = None
     start_date: Optional[str] = None   # ISO date string "YYYY-MM"
     end_date: Optional[str] = None     # None = current role
     is_current: bool = False

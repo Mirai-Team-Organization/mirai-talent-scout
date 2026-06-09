@@ -1116,6 +1116,9 @@
 
           case "text_delta":
             textAcc += event.text;
+            textEl.textContent = textAcc;
+            tracker.style.display = "none";
+            scrollBottom();
             break;
 
           case "candidates":

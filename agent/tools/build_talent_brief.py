@@ -77,8 +77,20 @@ _BRIEF_SYSTEM = """You are a recruiting assistant. Given a job posting, output a
                               If the JD describes backend/API/server-side work, always include backend_signal.
   signals: array            — achievement signals. Leave empty unless the role explicitly requires OSS work.
                               Valid values ONLY: oss_contributor, starred_project_author
+  internal_role_slugs: array — 2-4 kebab-case jobRole values matching the internal talent pool.
+                              The pool stores values like "ai-engineer", "software-engineer",
+                              "data-scientist", "backend-engineer", "frontend-engineer",
+                              "fullstack-engineer", "ml-engineer", "devops-engineer", "python-developer".
+                              Generate slug variants that cover the role intent broadly.
+                              Empty array if the role is unclear.
+                              Examples for "Senior ML Engineer": ["ml-engineer", "ai-engineer", "software-engineer"]
+                              Examples for "React Frontend Developer": ["frontend-engineer", "fullstack-engineer"]
+  country_code: string|null — ISO 3166-1 alpha-2 country code derived from the job location.
+                              Null if not determinable (remote-only, multi-country, unspecified).
+                              Examples: "IT" for Milan/Rome/Italy, "CH" for Zurich/Geneva/Switzerland,
+                              "DE" for Berlin/Munich/Germany, null for "Remote" or "Worldwide".
 
-Note: the developer index is pre-filtered to GitHub grade B- or above. Do NOT filter on activity or seniority
+Note: the developer index is pre-filtered to GitHub grade C+ or above. Do NOT filter on activity or seniority
 — those are determined from LinkedIn enrichment. Your job is only to identify the technical type.
 
 Return ONLY the JSON object. No markdown fences, no explanation."""
@@ -120,7 +132,7 @@ def _build_brief_from_rubric(
         user_msg += f"\n\nJob description:\n{jd_excerpt}"
 
     try:
-        raw = _haiku(_BRIEF_SYSTEM, user_msg, max_tokens=400)
+        raw = _haiku(_BRIEF_SYSTEM, user_msg, max_tokens=500)
         cleaned = re.sub(r"```[a-z]*\n?", "", raw).strip()
         data = json.loads(cleaned)
         if not isinstance(data, dict):
@@ -132,23 +144,42 @@ def _build_brief_from_rubric(
         role_signals = [s for s in (data.get("role_signals") or []) if s in _VALID_ROLE_SIGNALS]
         signals = [s for s in (data.get("signals") or []) if s in _VALID_SIGNALS]
 
+        # New fields: internal pool search slugs + country code
+        raw_slugs = data.get("internal_role_slugs")
+        internal_role_slugs = (
+            [str(s) for s in raw_slugs if s and isinstance(s, str)]
+            if isinstance(raw_slugs, list) else []
+        )
+
+        raw_country = data.get("country_code")
+        country_code = (
+            str(raw_country).strip().upper()
+            if raw_country and isinstance(raw_country, str) and len(str(raw_country).strip()) == 2
+            else None
+        )
+
+        index_query: dict = {
+            **({"languages":    languages}    if languages    else {}),
+            **({"role_signals": role_signals} if role_signals else {}),
+            **({"signals":      signals}      if signals      else {}),
+            **({"country":      country_code} if country_code else {}),
+        }
+
         return {
-            "rubric_text":      rubric_text,
-            "dealbreaker_text": dealbreaker_text,
-            "index_query": {
-                **({"languages":    languages}    if languages    else {}),
-                **({"role_signals": role_signals} if role_signals else {}),
-                **({"signals":      signals}      if signals      else {}),
-            },
+            "rubric_text":          rubric_text,
+            "dealbreaker_text":     dealbreaker_text,
+            "internal_role_slugs":  internal_role_slugs,
+            "index_query":          index_query,
         }
 
     except Exception as e:
         print(f"[build_talent_brief] rubric translation failed: {e} — using fallback")
         skills_str_short = ", ".join(skills[:5]) if skills else title
         return {
-            "rubric_text":      f"{seniority} {title} with {skills_str_short}",
-            "dealbreaker_text": "",
-            "index_query":      {},
+            "rubric_text":          f"{seniority} {title} with {skills_str_short}",
+            "dealbreaker_text":     "",
+            "internal_role_slugs":  [],
+            "index_query":          {},
         }
 
 
@@ -287,6 +318,7 @@ def build_talent_brief(job_posting_id: str) -> dict:
     rubric_text: str = brief_data["rubric_text"]
     dealbreaker_text: str = brief_data["dealbreaker_text"]
     index_query: dict = brief_data["index_query"]
+    internal_role_slugs: list[str] = brief_data.get("internal_role_slugs") or []
 
     # ── 4. Normalise salary ───────────────────────────────────────────────────
     salary_min, salary_max, salary_currency = parse_salary(salary_range_str)
@@ -328,6 +360,7 @@ def build_talent_brief(job_posting_id: str) -> dict:
         language_list=language_list,
         role_type=role_type,
         index_query=index_query,
+        internal_role_slugs=internal_role_slugs,
         sources=["internal_pool", "talent_index"],
         source_reasoning=source_reasoning,
         job_description=job_description,

@@ -150,9 +150,9 @@ def search_internal_pool(
     sb = get_supabase()
     limit = min(limit, 50)
 
-    title: str = talent_brief.get("title", "")
     seniority: str = talent_brief.get("seniority", "mid")
     skills: list[str] = talent_brief.get("skills") or []
+    internal_role_slugs: list[str] = talent_brief.get("internal_role_slugs") or []
 
     # ── Build seniority whitelist ─────────────────────────────────────────────
     # Include adjacent tier so "senior" also catches "lead" (and "mid" catches "medior")
@@ -164,24 +164,41 @@ def search_internal_pool(
     }
     accepted_tiers = _ADJACENT.get(seniority, {"mid"})
 
-    # ── Build OR filter across title words + top skills ──────────────────────
-    _STOP_WORDS = {"engineer", "developer", "and", "or", "the", "a", "in", "for"}
-    title_words = [w for w in title.split() if w.lower() not in _STOP_WORDS] if title else []
-    if not title_words:
-        title_words = title.split()[:1] or ["engineer"]
+    # ── Build LLM-driven OR filter ────────────────────────────────────────────
+    # Role slugs query jobRole; skills query skillLevels and skills fields.
+    # Max 9 OR conditions (3 slugs × 1 field + 3 skills × 2 fields).
+    or_parts: list[str] = []
+    for slug in internal_role_slugs[:3]:
+        safe_slug = re.sub(r"[^a-z0-9\- ]", "", slug.lower()).strip()
+        if safe_slug:
+            or_parts.append(f"profile_data->>jobRole.ilike.%{safe_slug}%")
+    for sk in skills[:3]:
+        safe_sk = re.sub(r"[^a-z0-9\-+# ]", "", sk.lower()).strip()
+        if safe_sk:
+            or_parts.append(f"profile_data->>skillLevels.ilike.%{safe_sk}%")
+            or_parts.append(f"profile_data->>skills.ilike.%{safe_sk}%")
 
-    keywords = title_words[:3] + (skills[:2] if len(title_words) < 2 else [])
-    # Supabase OR filter: "col.ilike.%v1%,col.ilike.%v2%"
-    or_filter = ",".join(f"profile_data->>jobRole.ilike.%{kw}%" for kw in keywords)
+    _select = "user_id, profile_data, users(email, nome, cognome, profile_img_url, location_city, location_country, azienda)"
 
     try:
-        result = (
-            sb.table("user_working_profiles")
-            .select("user_id, profile_data, users(email, nome, cognome, profile_img_url, location_city, location_country, azienda)")
-            .or_(or_filter)
-            .limit(limit * 3)
-            .execute()
-        )
+        if not or_parts:
+            # No filters available — fetch entire pool, let scoring handle relevance
+            print("[search_internal_pool] No slugs or skills — fetching full pool")
+            result = (
+                sb.table("user_working_profiles")
+                .select(_select)
+                .limit(limit * 3)
+                .execute()
+            )
+        else:
+            or_filter = ",".join(or_parts)
+            result = (
+                sb.table("user_working_profiles")
+                .select(_select)
+                .or_(or_filter)
+                .limit(limit * 3)
+                .execute()
+            )
         rows = result.data or []
     except Exception as e:
         print(f"[search_internal_pool] Query failed: {e}")

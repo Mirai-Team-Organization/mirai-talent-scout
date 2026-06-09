@@ -32,7 +32,17 @@ import logging
 import os
 import re
 import threading
+from pathlib import Path
 from typing import Any, AsyncGenerator
+
+# ── Load .env for local dev (no-op in Lambda where env vars come from Secrets Manager) ──
+_env_path = Path(__file__).parent.parent / ".env"
+if _env_path.exists():
+    for _line in _env_path.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip())
 
 import botocore.config
 from fastapi import FastAPI, HTTPException, Request
@@ -52,6 +62,7 @@ from agent.tools.build_talent_brief import build_talent_brief
 from agent.tools.search_internal_pool import search_internal_pool
 from agent.tools.search_talent_index import search_talent_index
 from agent.tools.score_candidate_rubric import score_candidate_rubric
+from agent.tools.agentic_rerank import agentic_rerank
 from db.client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -83,6 +94,7 @@ _TOOL_LABELS: dict[str, str] = {
     "enrich_linkedin":       "Enriching LinkedIn profiles...",
     "score_candidate":       "Scoring and grading candidates...",
     "rank_shortlist":        "Ranking the shortlist...",
+    "agentic_rerank":        "Ranking candidates with Sonnet reasoning...",
 }
 
 # ── System prompts ────────────────────────────────────────────────────────────
@@ -111,15 +123,34 @@ RULES:
 - Internal pool is free — always run it.
 - Never call score_candidate_rubric once per candidate — one call with the full combined list."""
 
-FOLLOWUP_SYSTEM_PROMPT = """You are Mirai's AI Talent Scout. The candidate shortlist from the previous search is already in the conversation history as a JSON array.
+FOLLOWUP_SYSTEM_PROMPT = """You are Mirai's AI Talent Scout. The candidate shortlist from the previous search is in the conversation history as a JSON array.
 
-Answer the recruiter's follow-up question. You may:
-- Filter, explain, or compare candidates from the existing shortlist
-- Answer questions about specific candidates or their scores
-- Call rank_shortlist if the recruiter asks for a different ordering or tighter filter
+The current job posting ID is: {job_posting_id}
 
-Do NOT re-run the search pipeline. Work only with the candidates already in the conversation.
-When returning a candidate list, output a JSON array starting with [ and ending with ]."""
+## DEFAULT: answer questions about the existing shortlist
+For any question about the existing candidates — filtering, explaining scores, comparing
+profiles, re-ordering — work ONLY with the candidates already in the conversation.
+Call rank_shortlist if asked for a different ordering or tighter filter.
+Output a JSON array starting with [ and ending with ] when returning candidates.
+
+## ONLY run a new search when the recruiter uses explicit language like:
+"new search", "search again", "re-run", "do a new research", "find new candidates",
+"look for [seniority] people", "search for junior/mid/senior", "different seniority".
+
+Vague phrases like "what about less senior?", "can we also look at...", "show me more"
+do NOT trigger a new search — answer from the existing shortlist instead.
+
+## When a new search IS explicitly requested, call these tools in order:
+1. build_talent_brief(job_posting_id="{job_posting_id}")
+2. Modify the returned brief dict's "seniority" field if a different level was requested
+   Valid values: "junior", "mid", "senior", "lead"
+   "junior to mid with potential" → "mid"  |  "more junior" → "junior"
+3. search_internal_pool(talent_brief=<brief>, limit=20)
+4. search_talent_index(talent_brief=<brief>)
+5. score_candidate_rubric(candidates=<internal + index combined>, talent_brief=<brief>)
+6. agentic_rerank(candidates=<scored>, talent_brief=<brief>)
+
+Output the final JSON array from agentic_rerank. Nothing else — no prose, no preamble."""
 
 
 # ── SSE helpers ───────────────────────────────────────────────────────────────
@@ -228,9 +259,9 @@ def _run_direct_pipeline(
         _scr._progress.fn = None
     put(sse_event("tool_done", tool="score_candidate_rubric", count=len(scored)))
 
-    put(sse_event("tool_start", tool="rank_shortlist", text=_TOOL_LABELS["rank_shortlist"]))
-    ranked = rank_shortlist._tool_func(candidates=scored, talent_brief=talent_brief)
-    put(sse_event("tool_done", tool="rank_shortlist", count=len(ranked), input_count=len(scored)))
+    put(sse_event("tool_start", tool="agentic_rerank", text=_TOOL_LABELS["agentic_rerank"]))
+    ranked = agentic_rerank._tool_func(candidates=scored, talent_brief=talent_brief)
+    put(sse_event("tool_done", tool="agentic_rerank", count=len(ranked), input_count=len(scored)))
 
     put(sse_event("candidates", data=ranked))
 
@@ -375,6 +406,11 @@ async def agent_endpoint(request: Request, body: ChatRequest):
             raise HTTPException(status_code=401, detail="Unauthorized")
 
     job_posting_id = body.job_posting_id
+    # Validate UUID format before it reaches any prompt or query
+    if job_posting_id:
+        import re as _re
+        if not _re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", job_posting_id, _re.IGNORECASE):
+            raise HTTPException(status_code=400, detail="Invalid job_posting_id format")
 
     async def generate() -> AsyncGenerator[bytes, None]:
         loop = asyncio.get_running_loop()
@@ -404,7 +440,7 @@ async def agent_endpoint(request: Request, body: ChatRequest):
                     # ── Direct pipeline: first search, no LLM overhead between steps ──
                     _run_direct_pipeline(job_posting_id, put, cost_info)
                 else:
-                    # ── Strands agent: follow-up questions over existing shortlist ─────
+                    # ── Strands agent: follow-up questions OR new search with adjusted params ──
                     model = BedrockModel(
                         model_id=os.environ.get(
                             "BEDROCK_MODEL", "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
@@ -416,10 +452,20 @@ async def agent_endpoint(request: Request, body: ChatRequest):
                             retries={"max_attempts": 2},
                         ),
                     )
+                    followup_prompt = FOLLOWUP_SYSTEM_PROMPT.format(
+                        job_posting_id=job_posting_id
+                    )
                     agent = Agent(
                         model=model,
-                        tools=[_ToolWithSSE(rank_shortlist, put)],
-                        system_prompt=FOLLOWUP_SYSTEM_PROMPT,
+                        tools=[
+                            _ToolWithSSE(build_talent_brief, put),
+                            _ToolWithSSE(search_internal_pool, put),
+                            _ToolWithSSE(search_talent_index, put),
+                            _ToolWithSSE(score_candidate_rubric, put),
+                            _ToolWithSSE(agentic_rerank, put),
+                            _ToolWithSSE(rank_shortlist, put),
+                        ],
+                        system_prompt=followup_prompt,
                         callback_handler=callback,
                         messages=messages,
                     )

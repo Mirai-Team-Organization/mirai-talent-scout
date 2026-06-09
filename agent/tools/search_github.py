@@ -234,6 +234,12 @@ def _github_graphql(query: str, variables: dict, token: str) -> dict:
                 time.sleep(2 ** attempt * 5)
                 continue
             raise
+        except (ConnectionError, OSError) as e:
+            # Catches RemoteDisconnected, connection resets, timeouts from parallel load
+            if attempt < 2:
+                time.sleep(2 ** attempt * 3)
+                continue
+            raise
     raise RuntimeError("GitHub API request failed after retries")
 
 

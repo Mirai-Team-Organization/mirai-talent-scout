@@ -110,6 +110,16 @@ Score on 3 dimensions and evaluate the hiring rubric items.
    Absence of evidence is NOT evidence of failure — if you cannot tell from the profile, mark met=true.
    Reserve met=false for unambiguous disqualifiers (e.g. candidate explicitly works in a different domain,
    or their entire career history shows no overlap with the requirement).
+   VERSION EQUIVALENCE: For version-specific technology dealbreakers, treat same-major-framework
+   releases as semantically equivalent. Examples:
+   - "No Next.js App Router v15+ experience" → met=true if candidate has ANY Next.js App Router
+     experience (v13+), since App Router was introduced in v13.4 and the architecture is stable
+     across v13/v14/v15. Lack of an explicit "v15" mention is NOT a disqualifier.
+   - "No React 18+ experience" → met=true if candidate has React experience (v16/v17/v18 share
+     the same core paradigm). Apply this logic to all framework version dealbreakers.
+   LANGUAGE FLUENCY: "Not fluent in Italian/French/Spanish/etc." → if candidate is based in that
+   country (Italy, France, Spain, etc.) or has worked there, mark met=true unless there is
+   explicit evidence they do NOT speak the language.
 
 5. must_haves_met: List (by exact text) each must-have the candidate clearly satisfies.
    must_haves_gap: List (by exact text) each must-have the candidate is missing or only partially meets.

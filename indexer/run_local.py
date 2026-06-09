@@ -24,6 +24,7 @@ import argparse
 import signal
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from indexer.core import (
@@ -91,6 +92,22 @@ def _print_progress(shard: str, total: int, start_time: float, last_count: int) 
     print(f"\n[{ts}] [{shard}] running total: {total} accepted | {rate}", flush=True)
 
 
+_FETCH_WORKERS = 5  # parallel GraphQL fetches per page batch
+
+
+def _fetch_and_score(login: str, pool: TokenPool) -> tuple[str, dict | None, any, float] | None:
+    """Fetch + score a single profile. Returns (login, profile, grade, score) or None."""
+    token, _ = pool.acquire()
+    profile = fetch_profile(login, token)
+    if not profile:
+        return None
+    try:
+        ts = calculate_talent_score(profile)
+        return login, profile, ts.grade, ts.overall
+    except Exception:
+        return None
+
+
 def run_shard(shard: str, locations: list[str], pool: TokenPool, dry_run: bool) -> int:
     pending = get_pending_combos(locations, _LANGUAGES)
 
@@ -119,7 +136,7 @@ def run_shard(shard: str, locations: list[str], pool: TokenPool, dry_run: bool) 
         last_page_count = 0
         _print_combo_header(location, language)
 
-        for page in range(1, 11):
+        for page in range(1, 31):
             if _stop_requested:
                 break
 
@@ -132,38 +149,32 @@ def run_shard(shard: str, locations: list[str], pool: TokenPool, dry_run: bool) 
             pages_fetched += 1
             last_page_count = len(logins)
 
-            for login in logins:
-                if _stop_requested:
-                    break
-                if login in seen:
-                    continue
-                seen.add(login)
+            # Deduplicate before fetching
+            fresh = [l for l in logins if l not in seen]
+            seen.update(fresh)
 
-                token, _ = pool.acquire()
-                profile = fetch_profile(login, token)
-                if not profile:
-                    continue
+            # Fetch + score all logins on this page in parallel
+            with ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as ex:
+                futures = {ex.submit(_fetch_and_score, login, pool): login for login in fresh}
+                for future in as_completed(futures):
+                    if _stop_requested:
+                        break
+                    result = future.result()
+                    if not result:
+                        continue
+                    login, profile, grade, score = result
 
-                # Pre-compute score to decide + log before DB write
-                try:
-                    ts = calculate_talent_score(profile)
-                    grade, score = ts.grade, ts.overall
-                except Exception:
-                    continue  # can't score → skip
+                    accepted = upsert_profile(profile, source="github_broad")
+                    if accepted:
+                        from indexer.role_signals import infer_role_signals
+                        profile["role_signals"] = infer_role_signals(profile)
+                        log_accepted(profile, grade, score)
+                        combo_upserted += 1
+                        total_upserted += 1
 
-                accepted = upsert_profile(profile, source="github_broad")
-                if accepted:
-                    # Attach role_signals for log display (upsert_profile computes them internally)
-                    from indexer.role_signals import infer_role_signals
-                    profile["role_signals"] = infer_role_signals(profile)
-                    log_accepted(profile, grade, score)
-                    combo_upserted += 1
-                    total_upserted += 1
-
-                # Progress summary every 50 accepted
-                if total_upserted > 0 and total_upserted % 50 == 0 and total_upserted != last_reported:
-                    _print_progress(shard, total_upserted, start_time, last_reported)
-                    last_reported = total_upserted
+                    if total_upserted > 0 and total_upserted % 50 == 0 and total_upserted != last_reported:
+                        _print_progress(shard, total_upserted, start_time, last_reported)
+                        last_reported = total_upserted
 
         completed = pages_fetched > 0 and last_page_count < 100
         mark_progress(location, language, pages_fetched, combo_upserted, completed=completed)

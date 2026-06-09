@@ -2,14 +2,14 @@
 Python port of gitcheck-webapp/src/lib/talentScoring.ts
 
 Weights (presentation removed — only technical activity signals count for indexing):
-  Tech Stack     33%  (top languages by code volume)
-  Open Source    28%  (contributions to repos user doesn't own)
+  Tech Stack     38%  (top languages by code volume)
+  Open Source    23%  (OSS contributions + max repo stars as impact signal)
   Consistency    22%  (active days + longest streak, past 12 months)
   Collaboration  17%  (PRs + PR reviews)
 
 Presentation is still computed and stored in the breakdown for display purposes
-but does NOT contribute to the overall score. Only profiles scoring B- or above
-(overall >= 42) are accepted into the talent index.
+but does NOT contribute to the overall score. Only profiles scoring C+ or above
+(overall >= 34, or >= 29 with university affiliation bonus) are accepted.
 
 IMPORTANT: Any change to weights or scoring logic here MUST be mirrored in the
 TypeScript implementation. Run `pytest tests/parity/` to verify alignment.
@@ -75,25 +75,38 @@ def _score_tech_stack(profile: dict) -> TechStackScore:
     return TechStackScore(score=round(score, 1), top_languages=top_langs)
 
 
-# ── Open source score (28%) ───────────────────────────────────────────────────
-# Uses the integer fields from the contributions dict (as returned by _parse_profile):
-#   openSourceRepoCount — number of distinct repos the user contributed to but doesn't own
-#   commits             — total commit contributions (proxy for depth of activity)
+# ── Open source score (23%) ───────────────────────────────────────────────────
+# Three sub-signals:
+#   repo_count    — breadth: distinct external repos contributed to
+#   commit_count  — depth: total commit contributions
+#   max_stars     — impact: highest star count on any owned repo
+#
+# Stars pulled from pinnedProjects (always present) and github_data.repositories
+# (present after indexer enrichment). Missing = 0, not an error.
 
 def _score_open_source(profile: dict) -> OpenSourceScore:
     contributions: dict = profile.get("contributions", {})
-    repo_count  = contributions.get("openSourceRepoCount", 0)
+    repo_count   = contributions.get("openSourceRepoCount", 0)
     commit_count = contributions.get("commits", 0)
 
-    # Normalize: 5 repos → ~50 pts; 50 commits → ~50 pts
-    repo_score   = _cdf_exponential(repo_count,   rate=0.15) * 50
-    commit_score = _cdf_exponential(commit_count, rate=0.02) * 50
-    score = repo_score + commit_score
+    # Stars: check pinned projects first, then full repo list
+    pinned = profile.get("pinnedProjects") or []
+    pinned_max = max((p.get("stargazerCount", 0) for p in pinned), default=0)
+    repos = (profile.get("github_data") or {}).get("repositories", {}).get("nodes") or []
+    repo_max = max((r.get("stargazerCount", 0) for r in repos), default=0)
+    max_stars = max(pinned_max, repo_max)
+
+    # Normalize: 5 repos → ~50 pts; 50 commits → ~30 pts; 50 stars → ~50 pts
+    repo_score   = _cdf_exponential(repo_count,   rate=0.15) * 35
+    commit_score = _cdf_exponential(commit_count, rate=0.02) * 35
+    star_score   = _cdf_lognormal(max_stars, mu=2.3, sigma=1.5) * 30  # mu≈10 stars median
+    score = repo_score + commit_score + star_score
 
     return OpenSourceScore(
         score=round(min(score, 100.0), 1),
         repo_count=repo_count,
         commit_count=commit_count,
+        max_stars=max_stars,
     )
 
 
@@ -176,10 +189,10 @@ def calculate_talent_score(profile: dict, hiring_context: str | None = None) -> 
     presentation = _score_presentation(profile)
 
     # Presentation excluded from overall — only technical activity signals matter.
-    # Weights redistributed proportionally (30+25+20+15 → 33+28+22+17).
+    # Weights: Tech Stack 38% | Open Source 23% (incl. stars) | Consistency 22% | Collaboration 17%
     overall = (
-        tech.score * 0.33 +
-        oss.score * 0.28 +
+        tech.score * 0.38 +
+        oss.score * 0.23 +
         consistency.score * 0.22 +
         collab.score * 0.17
     )

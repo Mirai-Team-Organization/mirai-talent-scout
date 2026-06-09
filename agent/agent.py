@@ -35,6 +35,7 @@ from agent.tools.rank_shortlist import rank_shortlist
 from agent.tools.build_talent_brief import build_talent_brief
 from agent.tools.search_internal_pool import search_internal_pool
 from agent.tools.score_candidate_rubric import score_candidate_rubric
+from agent.tools.agentic_rerank import agentic_rerank
 
 
 SYSTEM_PROMPT = """You are Mirai's AI Talent Scout — an autonomous recruiting orchestrator.
@@ -69,9 +70,14 @@ Step 5 — enrich_linkedin(usernames) on top GitHub candidates only
   Only call for GitHub candidates with fit_score ≥ 40 (avoid wasting API calls).
   NEVER call for internal candidates — they already have CV data.
 
-Step 6 — rank_shortlist(candidates)
-  Sorts by fit_score → mobility_score → talent_score → grade.
-  Returns the final ranked shortlist.
+Step 6 — agentic_rerank(candidates, talent_brief, limit=10)
+  Sonnet sub-agent that reasons comparatively over the scored pool:
+    - Assesses pool quality (flag distribution, must_haves coverage)
+    - If fewer than 3 strong_fit candidates: calls expand_pool() to search the
+      talent index with relaxed criteria (remote, adjacent skills, broader seniority)
+      and scores new candidates via score_candidate_rubric before ranking
+    - Produces a final ranked list with per-candidate rerank_reasoning
+  Use agentic_rerank() for Mode A. Do NOT use rank_shortlist() here.
 
 ────────────────────────────────────────────────────────
 MODE B: Natural-Language Query (legacy)
@@ -122,12 +128,13 @@ def create_agent(
         build_talent_brief,
         search_internal_pool,
         score_candidate_rubric,
+        agentic_rerank,
         # Mode B — NL legacy
         score_candidate,
+        rank_shortlist,
         # Shared
         search_github,
         enrich_linkedin,
-        rank_shortlist,
     ]
 
     kwargs: dict = dict(

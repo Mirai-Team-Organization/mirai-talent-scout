@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -27,14 +28,117 @@ from indexer.role_signals import compute_activity_score, infer_role_signals
 from scoring.talent_scorer import GRADE_ORDER, calculate_talent_score
 
 # ── Quality / celebrity filter constants ──────────────────────────────────────
-# Minimum grade to accept into the index (B- = overall >= 42)
-_MIN_GRADE = "B-"
+# Minimum grade to accept into the index (C+ = overall >= 34).
+# Lower than the previous B- floor (42) to widen the pool — we compensate by
+# requiring a LinkedIn URL so profiles are immediately enrichable.
+_MIN_GRADE = "C+"
 _MIN_GRADE_ORDER = GRADE_ORDER[_MIN_GRADE]
 
 # Reject profiles that are too famous — these people won't join an early-stage startup.
 # Karpathy-level: ~90k followers, ~50k stars on single repos.
 _MAX_FOLLOWERS = 20_000
 _MAX_REPO_STARS = 50_000
+
+# ── LinkedIn URL extraction from bio / websiteUrl ─────────────────────────────
+_LINKEDIN_RE = re.compile(r'linkedin\.com/in/([\w\-%]+)', re.IGNORECASE)
+
+
+def _extract_linkedin_url(website: str, bio: str) -> str | None:
+    """Return a normalised linkedin.com/in/handle URL if found in website or bio."""
+    for text in (website, bio):
+        if not text:
+            continue
+        m = _LINKEDIN_RE.search(text)
+        if m:
+            handle = m.group(1).rstrip("/")
+            return f"https://www.linkedin.com/in/{handle}"
+    return None
+
+
+# ── Top-university mention check ──────────────────────────────────────────────
+# Covers the full set of top European universities used by linkedin_search.mjs,
+# plus well-known abbreviations developers write in GitHub bios.
+# GitHub has no formal education data — this is a best-effort bio/company signal.
+_UNIVERSITY_RE = re.compile(
+    r'('
+    # ── Italy ────────────────────────────────────────────────────────────────
+    r'politecnico\s+di\s+milano|polimi'
+    r'|politecnico\s+di\s+torino|polito'
+    r'|universit[aà]\s+bocconi|bocconi'
+    r'|sapienza\s+university\s+of\s+rome|sapienza'
+    r'|university\s+of\s+bologna|unibo'
+    r'|university\s+of\s+padua|unipd'
+    r'|scuola\s+normale\s+superiore'
+    r'|university\s+of\s+trento|unitn'
+    r'|university\s+of\s+pisa|unipi'
+    # ── Switzerland ──────────────────────────────────────────────────────────
+    r'|eth\s+zurich|eth\s+z[üu]rich|ethz'
+    r'|epfl'
+    r'|university\s+of\s+zurich|uzh'
+    r'|university\s+of\s+basel'
+    r'|university\s+of\s+bern|unibe'
+    r'|university\s+of\s+geneva|unige'
+    r'|university\s+of\s+lausanne|unil'
+    # ── Germany ──────────────────────────────────────────────────────────────
+    r'|technical\s+university\s+of\s+munich|tu\s+munich|tum\b|technische\s+universit[aä]t\s+m[üu]nchen'
+    r'|rwth\s+aachen'
+    r'|karlsruhe\s+institute\s+of\s+technology|\bkit\b'
+    r'|tu\s+berlin|technische\s+universit[aä]t\s+berlin'
+    r'|lmu\s+munich|ludwig\s+maximilian\s+university'
+    r'|heidelberg\s+university|universit[aä]t\s+heidelberg'
+    r'|university\s+of\s+stuttgart|tu\s+stuttgart'
+    # ── United Kingdom ────────────────────────────────────────────────────────
+    r'|university\s+of\s+oxford|oxford\s+university'
+    r'|university\s+of\s+cambridge|cambridge\s+university'
+    r'|imperial\s+college\s+london|imperial\s+college'
+    r'|university\s+college\s+london|\bucl\b'
+    r'|university\s+of\s+edinburgh'
+    r'|university\s+of\s+manchester'
+    # ── France ───────────────────────────────────────────────────────────────
+    r'|[eé]cole\s+polytechnique'
+    r'|[eé]cole\s+normale\s+sup[eé]rieure|\bens\s+paris\b|\bens\b'
+    r'|centralesup[eé]lec'
+    r'|t[eé]l[eé]com\s+paris'
+    # ── Netherlands ───────────────────────────────────────────────────────────
+    r'|delft\s+university\s+of\s+technology|tu\s+delft'
+    r'|university\s+of\s+amsterdam|\buva\b'
+    # ── Sweden ───────────────────────────────────────────────────────────────
+    r'|kth\s+royal\s+institute|\bkth\b'
+    r'|chalmers\s+university'
+    # ── Denmark ──────────────────────────────────────────────────────────────
+    r'|technical\s+university\s+of\s+denmark|\bdtu\b'
+    # ── Austria ───────────────────────────────────────────────────────────────
+    r'|tu\s+wien|vienna\s+university\s+of\s+technology|technische\s+universit[aä]t\s+wien'
+    # ── Spain ────────────────────────────────────────────────────────────────
+    r'|universidad\s+polit[eé]cnica\s+de\s+madrid|\bupm\b'
+    r'|universitat\s+polit[eè]cnica\s+de\s+catalunya|\bupc\b'
+    # ── Belgium ───────────────────────────────────────────────────────────────
+    r'|ku\s+leuven|katholieke\s+universiteit\s+leuven'
+    r'|universit[eé]\s+libre\s+de\s+bruxelles|\bulb\b'
+    # ── Portugal ─────────────────────────────────────────────────────────────
+    r'|instituto\s+superior\s+t[eé]cnico|t[eé]cnico\s+lisboa|\bist\s+lisbon\b'
+    # ── Finland ───────────────────────────────────────────────────────────────
+    r'|aalto\s+university'
+    r'|university\s+of\s+helsinki'
+    # ── Czech Republic ────────────────────────────────────────────────────────
+    r'|czech\s+technical\s+university|\bctu\s+prague\b'
+    r')',
+    re.IGNORECASE,
+)
+
+# ── GitHub account age — seniority proxy ─────────────────────────────────────
+# Accounts created in 2015 or earlier are likely 35+ years old (GitHub launched
+# in 2008; early adopters tend to be more senior). Rough heuristic — not applied
+# if the field is missing.
+_MAX_ACCOUNT_AGE_YEAR = 2015  # inclusive upper bound to reject
+
+
+def _mentions_top_university(bio: str, company: str) -> bool:
+    """Return True if bio or company text references one of the indexed top universities."""
+    for text in (bio, company):
+        if text and _UNIVERSITY_RE.search(text):
+            return True
+    return False
 
 # ── Location → country/city mapping ──────────────────────────────────────────
 
@@ -206,7 +310,9 @@ def github_search_users_page(
             if e.code == 422:
                 return []  # GitHub rejects page > 10
             if e.code in (429, 403) and attempt < 2:
-                time.sleep(2 ** attempt * 10)
+                wait = 60 * (attempt + 1)  # 60s, then 120s — search API resets per minute
+                print(f"[search] 403/429 on page {page}, waiting {wait}s...")
+                time.sleep(wait)
                 continue
             raise
     return []
@@ -297,8 +403,13 @@ def _parse_profile_extended(user: dict) -> dict:
 
 def upsert_profile(profile: dict, source: str = "github_broad", source_details: dict | None = None) -> bool:
     """
-    Upsert a profile into talent_index only if it scores B- or above (overall >= 42).
-    Returns True if upserted, False if skipped (quality gate) or no login.
+    Upsert a profile into talent_index if it passes all gates:
+      1. GitHub account not too old (proxy for ≤35 years old)
+      2. LinkedIn URL present in websiteUrl or bio
+      3. Bio or company mentions one of the indexed top European universities
+      4. Effective score C+ or above (university affiliation gives +5 bonus
+         so strong-background/lower-activity profiles aren't unfairly penalised)
+    Returns True if upserted, False if skipped.
     """
     sb = get_supabase()
     p = profile.get("profile", {})
@@ -306,15 +417,14 @@ def upsert_profile(profile: dict, source: str = "github_broad", source_details: 
     if not login:
         return False
 
-    # ── Quality gate: only index B- and above ────────────────────────────────
-    try:
-        talent_score = calculate_talent_score(profile)
-        grade = talent_score.grade
-        if GRADE_ORDER.get(grade, 0) < _MIN_GRADE_ORDER:
-            return False  # profile too weak — skip
-    except Exception as e:
-        print(f"[upsert_profile] {login}: quality gate scoring failed ({e}) — skipping")
-        return False
+    # ── Seniority proxy: skip accounts created 2015 or earlier ───────────────
+    created_at = p.get("createdAt") or ""
+    if created_at:
+        try:
+            if int(created_at[:4]) <= _MAX_ACCOUNT_AGE_YEAR:
+                return False
+        except (ValueError, TypeError):
+            pass  # unparseable date — allow through
 
     location_raw = p.get("location")
     country_code, city = infer_location(location_raw)
@@ -326,14 +436,38 @@ def upsert_profile(profile: dict, source: str = "github_broad", source_details: 
         default=0,
     )
 
-    # Celebrity filter part 2: also gate on repo star count
+    # Celebrity filter: gate on repo star count
     if max_stars > _MAX_REPO_STARS:
         return False
 
     # Extract contact fields from profile
     email = p.get("email") or None
     website = (p.get("websiteUrl") or "").strip()
-    linkedin_url = website if "linkedin.com" in website.lower() else None
+    bio = (p.get("bio") or "").strip()
+    linkedin_url = _extract_linkedin_url(website, bio)
+
+    # Require a LinkedIn URL — profiles without one can't be enriched easily
+    if not linkedin_url:
+        return False
+
+    # Top-university mention in bio/company — soft signal, not a hard filter
+    company = (p.get("company") or "").strip()
+    has_uni = _mentions_top_university(bio, company)
+
+    # ── Quality gate ─────────────────────────────────────────────────────────
+    # University-affiliated profiles get +5 to the effective score so that strong
+    # academic backgrounds aren't penalised by lower recent-activity numbers.
+    # The stored talent_score always reflects the true computed value.
+    try:
+        from scoring.talent_scorer import score_to_grade
+        talent_score = calculate_talent_score(profile)
+        effective_score = talent_score.overall + (5.0 if has_uni else 0.0)
+        effective_grade = score_to_grade(effective_score)
+        if GRADE_ORDER.get(effective_grade, 0) < _MIN_GRADE_ORDER:
+            return False
+    except Exception as e:
+        print(f"[upsert_profile] {login}: quality gate scoring failed ({e}) — skipping")
+        return False
 
     lang_names = [l["name"] for l in (profile.get("languages") or [])]
     contrib = profile.get("contributions", {})

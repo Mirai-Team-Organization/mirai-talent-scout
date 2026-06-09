@@ -32,28 +32,6 @@ _ROLE_LANGUAGES: dict[str, list[str]] = {
     "fde_signal":          ["Python", "TypeScript", "JavaScript"],
 }
 
-# Country → cities with sort boost
-_PRIORITY_CITIES: dict[str, list[str]] = {
-    "IT": ["Milan", "Milano"],
-    "CH": ["Zurich", "Zuerich"],
-}
-
-
-def _infer_country(location_hints: list[str]) -> str | None:
-    """Derive country_code from location strings in the TalentBrief."""
-    it_keywords = {"italy", "italia", "milan", "milano", "rome", "roma", "turin",
-                   "torino", "florence", "firenze", "bologna", "naples", "napoli",
-                   "genoa", "palermo", "bari"}
-    ch_keywords = {"switzerland", "schweiz", "svizzera", "zurich", "zuerich",
-                   "zürich", "geneva", "geneve", "genève", "basel", "bern",
-                   "lausanne", "lugano"}
-    combined = " ".join(location_hints).lower()
-    if any(k in combined for k in it_keywords):
-        return "IT"
-    if any(k in combined for k in ch_keywords):
-        return "CH"
-    return None
-
 
 def _row_to_profile(row: dict) -> dict:
     """
@@ -150,15 +128,12 @@ def search_talent_index(
     # ── Derive filters — prefer structured index_query, fall back to legacy fields ─
     iq: dict = talent_brief.get("index_query") or {}
 
-    location_hints: list[str] = talent_brief.get("locations") or []
-    if not location_hints and talent_brief.get("location"):
-        location_hints = [talent_brief["location"]]
-
     required_languages: list[str] = iq.get("languages") or talent_brief.get("language_list") or []
     role_signals: list[str] = iq.get("role_signals") or []
     required_signals: list[str] = iq.get("signals") or []
     seniority: str = talent_brief.get("seniority", "mid")
-    country_code = _infer_country(location_hints)
+    # Country from LLM (build_talent_brief Haiku call); None = global search
+    country_code: str | None = iq.get("country") or None
 
     # Signals to query — use all provided signals (up to 2); fall back to role_type
     query_signals: list[str | None] = (
@@ -181,12 +156,11 @@ def search_talent_index(
 
     # ── Derive city hint for prioritised ordering ─────────────────────────────
     priority_city: str | None = None
-    if country_code:
-        for city_name in _PRIORITY_CITIES.get(country_code, []):
-            combined = " ".join(location_hints).lower()
-            if city_name.lower() in combined:
-                priority_city = city_name
-                break
+    location_str = (talent_brief.get("location") or "").lower()
+    for city_name in ("Milan", "Milano", "Zurich", "Zuerich"):
+        if city_name.lower() in location_str:
+            priority_city = city_name
+            break
 
     def _rpc_query(overlap: int) -> list[dict]:
         """Run one RPC call per role signal, union and deduplicate results."""

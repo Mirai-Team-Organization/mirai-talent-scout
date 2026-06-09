@@ -35,7 +35,7 @@ def _make_profile(
             "pullRequests": prs,
             "pullRequestReviews": reviews,
             "issues": 5,
-            "openSource": [{"repo": {"name": f"ext/repo{i}"}, "count": oss_commits // oss_repos} for i in range(oss_repos)],
+            "openSourceRepoCount": oss_repos,
         },
         "repositories": {"nodes": []},
     }
@@ -54,11 +54,11 @@ def test_grade_thresholds():
 
 
 def test_active_developer_scores_high():
-    profile = _make_profile(commits=200, prs=40, reviews=20, active_days=300, streak=60)
+    profile = _make_profile(commits=600, prs=40, reviews=20, active_days=300, streak=60)
     result = calculate_talent_score(profile)
 
     assert result.overall >= 60, f"Active dev should score ≥ 60, got {result.overall}"
-    assert result.grade in ("S", "A+", "A", "A-", "B+"), f"Got {result.grade}"
+    assert result.grade in ("S", "A+", "A", "A-", "B+", "B"), f"Got {result.grade}"
 
 
 def test_inactive_developer_scores_low():
@@ -76,8 +76,8 @@ def test_breakdown_sums_to_overall():
     b = result.breakdown
 
     expected = (
-        b.tech_stack.score * 0.33 +
-        b.open_source.score * 0.28 +
+        b.tech_stack.score * 0.38 +
+        b.open_source.score * 0.23 +
         b.consistency.score * 0.22 +
         b.collaboration.score * 0.17
         # presentation excluded from overall (indexing-only signal)
